@@ -74,14 +74,24 @@ Agents **do not communicate directly** — the orchestrator reads each agent's o
 
 ## Commands
 
-### `python3 scripts/init-task.py [description] --target [repo-path]`
+### `/create-task "description" [--target /path/to/repo]`
 
 Initialize a task directory:
 
-```bash
-python3 scripts/init-task.py "Write API for user service" --target /path/to/repo
-python3 scripts/init-task.py "Fix payment bug" -t ~/projects/payment
-python3 scripts/init-task.py "Refactor auth module"  # no target
+```
+/create-task "Write API for user service" --target /path/to/repo
+/create-task "Fix payment bug" -t ~/projects/payment
+/create-task "Refactor auth module"
+```
+
+### `/check-status [task-id]`
+
+Check task completion status:
+
+```
+/check-status 20260422-143000-build-login-api
+/check-status --list
+/check-status --list my-project
 ```
 
 ### `/workflow [task-id]`
@@ -156,16 +166,6 @@ debugger = Agent(subagent_type="general-purpose", run_in_background=False, promp
 
 ---
 
-## Scripts
-
-| Script                             | Purpose                          |
-| ---------------------------------- | -------------------------------- |
-| `scripts/init-task.py`             | Initialize task directory        |
-| `scripts/workflow-orchestrator.py` | Generate agent prompts           |
-| `scripts/check-completion.py`      | Check task completion status     |
-
----
-
 ## Workspace Structure
 
 ```
@@ -182,6 +182,8 @@ agent-coding/
 │   │   ├── researcher.md
 │   │   └── learner.md
 │   ├── commands/
+│   │   ├── create-task.md    # /create-task command
+│   │   ├── check-status.md   # /check-status command
 │   │   ├── workflow.md       # /workflow command
 │   │   └── queue.md          # /queue command
 │   └── skills/
@@ -210,10 +212,6 @@ agent-coding/
 │               ├── approval.md           # Reviewer output (if APPROVED)
 │               ├── issues.md             # Reviewer output (if ISSUES)
 │               └── fix-log.md            # Debugger output
-└── scripts/
-    ├── init-task.py
-    ├── workflow-orchestrator.py
-    └── check-completion.py
 ```
 
 ---
@@ -222,18 +220,15 @@ agent-coding/
 
 ### Single task
 
-```bash
-# 1. Init task (auto-creates project folder and context.md template)
-python3 scripts/init-task.py "Write login API" --target /path/to/repo
+```
+# 1. Create task
+/create-task "Write login API" --target /path/to/repo
 
-# 2. (Optional) Edit project conventions
-edit projects/[project-name]/context.md
-
-# 3. Run workflow (inside Claude Code session)
+# 2. Run workflow
 /workflow tasks/[project-name]/[task-id]
 
-# 4. Check result
-cat tasks/[project-name]/[task-id]/review/approval.md
+# 3. Check result
+/check-status [task-id]
 ```
 
 ### Queue (multiple tasks)

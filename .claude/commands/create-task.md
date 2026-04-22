@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Initialize a new task directory for the multi-agent workflow. Equivalent to running `python3 scripts/init-task.py` but easier to invoke.
+Initialize a new task directory for the multi-agent workflow.
 
 ## Usage
 
@@ -11,42 +11,101 @@ Initialize a new task directory for the multi-agent workflow. Equivalent to runn
 /create-task "Task description"
 ```
 
-## When to Use
-
-When the user says:
-- `/create-task "..."`
-- "tạo task ..."
-- "create task ..."
-- "init task ..."
-
 ## Implementation
 
-When this command is invoked, run the init-task script with the provided arguments:
+### 1. Parse input
 
-### Parse the input
+Extract from command args:
+- **description** — the task description text
+- **--target / -t** — optional path to target repository
 
-From the command args, extract:
-- **task description** — the quoted string or text before any flags
-- **--target / -t** — optional path to the target repository
+### 2. Derive identifiers
 
-### Run the script
+- **project name**: if `--target` provided, slugify the repo folder name (lowercase, replace spaces/special chars with `-`). If no target, use `"workspace"`.
+- **task ID**: `YYYYMMDD-HHMMSS-slugified-description` (slug max 50 chars)
+- **task dir**: `tasks/[project]/[task-id]/`
 
-```bash
-cd /Users/tue.nc/Desktop/agent-coding
-python3 scripts/init-task.py "[task description]" --target [repo-path]
+### 3. Create directories
+
+Using Bash `mkdir -p`:
+
+```
+tasks/[project]/[task-id]/code/
+tasks/[project]/[task-id]/review/
+tasks/[project]/[task-id]/research/
 ```
 
-If no `--target` is provided:
-```bash
-python3 scripts/init-task.py "[task description]"
+### 4. Create project context (if new project)
+
+If `projects/[project]/context.md` does NOT exist, create it:
+
+```markdown
+# Project Context: [project-name]
+
+**Repo path:** [target path or N/A]
+
+## Tech Stack
+
+<!-- Describe the tech stack, frameworks, languages used -->
+
+## Coding Conventions
+
+<!-- Naming conventions, file structure rules, patterns to follow -->
+
+## Forbidden Patterns
+
+<!-- Things agents must NOT do in this project -->
+
+## Notes
+
+<!-- Any other context agents should know before working on this project -->
 ```
 
-### After running
+### 5. Write input.md
 
-Report back to the user:
+Write to `tasks/[project]/[task-id]/input.md`:
+
+```markdown
+# Task Input
+
+**Task ID:** [task-id]
+**Project:** [project-name]
+**Created:** [ISO datetime]
+**Description:** [description]
+
+## Target Repository
+
+**Path:** [target path]
+**Name:** [repo folder name]
+
+## Project Context
+
+See: projects/[project]/context.md
+
+## User's Request
+
+[description]
+```
+
+### 6. Write target-info.md (if --target)
+
+Write to `tasks/[project]/[task-id]/target-info.md`:
+
+```markdown
+# Target Repository Info
+
+**Path:** [target path]
+**Name:** [repo folder name]
+**Project:** [project-name]
+**Project context:** projects/[project]/context.md
+```
+
+### 7. Report to user
+
 - Task ID created
-- Project name derived
+- Project name
 - Task directory path
+- Target repo (if any)
 - Suggest next step: `/workflow tasks/[project]/[task-id]`
 
 ## Examples
