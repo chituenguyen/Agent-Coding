@@ -60,11 +60,13 @@ ORCHESTRATOR (Main Session)
 | ------------------- | ------------------------------------------------- | ------ | ---------------------------------------------- |
 | **Architect**       | "Designing systems is my passion"                 | sonnet | Analyze requirements, write SPEC.md            |
 | **Researcher**      | "Knowledge is power"                              | sonnet | Research docs, libraries, best practices       |
-| **Coder Backend**   | "Clean, efficient code is art"                    | haiku  | Implement backend — API, DB, services          |
+| **Coder Backend**   | "Clean, efficient code is art"                    | sonnet | Implement backend — API, DB, services          |
 | **Coder Frontend**  | "Beautiful UI is a conversation between design and code" | sonnet | Implement UI, verify with browser MCP |
 | **Reviewer**        | "Code quality is non-negotiable"                  | sonnet | Review code, approve or reject                 |
 | **Debugger**        | "Bugs fear me"                                    | sonnet | Fix issues found by Reviewer                   |
-| **Learner**         | "Every task is a lesson"                          | sonnet | Extract learnings, update context.md           |
+| **Learner**         | "Every task is a lesson"                          | haiku  | Extract learnings, update context.md           |
+
+Model is set via `model` parameter on `Agent()` — overrides agent definition frontmatter. Learner uses haiku (lightweight task). All others use sonnet. Orchestrator can override per-task if needed (e.g. `model="opus"` for complex architecture).
 
 Agents **do not communicate directly** — the orchestrator reads each agent's output and injects it into the next agent's prompt.
 
@@ -91,6 +93,35 @@ Spawn agents in sequence — **this actually runs agents**:
 /workflow --new "Task description" --target /path/to/repo
 ```
 
+### `/queue [command]`
+
+Manage a task queue — add multiple tasks, process them sequentially:
+
+```bash
+# Add tasks to queue
+/queue add "Build login API" --target /path/to/repo
+/queue add "Fix payment bug" --target /path/to/repo
+/queue add "Add notifications" --target /path/to/repo
+
+# View queue
+/queue list
+
+# Start processing (sequential, auto-continues)
+/queue start
+
+# Clean up
+/queue clear              # remove done tasks
+/queue clear --failed     # remove failed tasks
+/queue clear --all        # remove all tasks
+```
+
+**Behavior:**
+- Sequential — one task at a time
+- On fail — marks task as failed, continues to next
+- All fail — stops the queue
+- Live add — can add tasks while queue is running (re-reads `queue.json` each iteration)
+- State stored in `queue.json` at workspace root
+
 ---
 
 ## Spawning Agents
@@ -110,10 +141,10 @@ coder_be = Agent(subagent_type="general-purpose", run_in_background=False, promp
 # frontend-only:
 coder_fe = Agent(subagent_type="general-purpose", run_in_background=False, prompt="...")
 
-# full-stack (parallel):
-coder_be = Agent(subagent_type="general-purpose", run_in_background=True, prompt="...")
-coder_fe = Agent(subagent_type="general-purpose", run_in_background=True, prompt="...")
-# wait for both
+# full-stack (parallel + worktree isolation):
+coder_be = Agent(subagent_type="general-purpose", isolation="worktree", run_in_background=True, prompt="...")
+coder_fe = Agent(subagent_type="general-purpose", isolation="worktree", run_in_background=True, prompt="...")
+# wait for both, then merge branches back
 
 # Stage 3 - Review
 reviewer = Agent(subagent_type="general-purpose", run_in_background=False, prompt="...")
@@ -140,6 +171,7 @@ debugger = Agent(subagent_type="general-purpose", run_in_background=False, promp
 ```
 agent-coding/
 ├── CLAUDE.md
+├── queue.json                # Task queue state (pending/running/done/failed)
 ├── .claude/
 │   ├── agents/               # Agent soul definitions
 │   │   ├── architect.md
@@ -150,7 +182,8 @@ agent-coding/
 │   │   ├── researcher.md
 │   │   └── learner.md
 │   ├── commands/
-│   │   └── workflow.md       # /workflow command
+│   │   ├── workflow.md       # /workflow command
+│   │   └── queue.md          # /queue command
 │   └── skills/
 │       ├── orchestrator.md   # How to spawn agents
 │       ├── architect.md
@@ -187,6 +220,8 @@ agent-coding/
 
 ## Quick Start
 
+### Single task
+
 ```bash
 # 1. Init task (auto-creates project folder and context.md template)
 python3 scripts/init-task.py "Write login API" --target /path/to/repo
@@ -199,10 +234,27 @@ edit projects/[project-name]/context.md
 
 # 4. Check result
 cat tasks/[project-name]/[task-id]/review/approval.md
+```
 
-# 5. List all tasks
-python3 scripts/check-completion.py --list
-python3 scripts/check-completion.py --list [project-name]
+### Queue (multiple tasks)
+
+```bash
+# 1. Add tasks to queue
+/queue add "Write login API" --target /path/to/repo
+/queue add "Add email service" --target /path/to/repo
+/queue add "Fix payment bug" --target /path/to/repo
+
+# 2. Start processing (sequential, auto-continues)
+/queue start
+
+# 3. Add more tasks while running (from another session)
+/queue add "Refactor auth" --target /path/to/repo
+
+# 4. Check queue status
+/queue list
+
+# 5. Clean up
+/queue clear
 ```
 
 ---
@@ -212,7 +264,7 @@ python3 scripts/check-completion.py --list [project-name]
 | Stage | Agents                          | Parallel?        | Output                                    |
 | ----- | ------------------------------- | ---------------- | ----------------------------------------- |
 | 1     | Architect, Researcher           | Yes              | SPEC.md (with task type) + research/      |
-| 2     | Coder Backend and/or Frontend   | Yes (full-stack) | backend-summary.md + frontend-summary.md  |
+| 2     | Coder Backend and/or Frontend   | Yes (full-stack, worktree isolated) | backend-summary.md + frontend-summary.md  |
 | 3     | Reviewer                        | No               | approval.md or issues.md                  |
 | 4     | Debugger (if needed)            | No               | Fixed code + fix-log.md                   |
 | 5     | Orchestrator                    | No               | Git commit + commit.md                    |
@@ -275,4 +327,5 @@ Debugger        : Fix is complete when every issue in issues.md is addressed
 - **Project context** — `projects/[project]/context.md` loaded by all agents for conventions
 - **Stage 1 is parallel** — Architect and Researcher run simultaneously
 - **Stage 2 is routed** — Architect labels task type in SPEC.md; orchestrator spawns backend-only, frontend-only, or both in parallel
+- **Worktree isolation** — full-stack parallel coders each get their own git worktree to avoid conflicts; orchestrator merges branches after both finish
 - **Sequential after Stage 2** — Reviewer -> Debugger (if needed) -> Re-review

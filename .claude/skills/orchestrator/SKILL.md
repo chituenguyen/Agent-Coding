@@ -67,6 +67,7 @@ target_info = read(f"{task_dir}/target-info.md")  # if exists
 ```python
 architect = Agent(
     subagent_type="general-purpose",
+    model="sonnet",
     run_in_background=True,
     prompt=f"""
 You are the Architect. Soul: "Designing systems is my passion"
@@ -87,6 +88,7 @@ SPEC.md must include:
 
 researcher = Agent(
     subagent_type="general-purpose",
+    model="sonnet",
     run_in_background=True,
     prompt=f"""
 You are the Researcher. Soul: "Knowledge is power"
@@ -112,6 +114,7 @@ spec = read(f"{task_dir}/SPEC.md")
 
 coder_be = Agent(
     subagent_type="general-purpose",
+    model="sonnet",
     run_in_background=False,
     prompt=f"""
 You are the Coder Backend. Soul: "Clean, efficient code is art"
@@ -132,6 +135,7 @@ When done, write summary to: {task_dir}/review/backend-summary.md
 ```python
 coder_fe = Agent(
     subagent_type="general-purpose",
+    model="sonnet",
     run_in_background=False,
     prompt=f"""
 You are the Coder Frontend. Soul: "Beautiful UI is a conversation between design and code"
@@ -148,12 +152,17 @@ When done, write summary to: {task_dir}/review/frontend-summary.md
 )
 ```
 
-#### full-stack — run in parallel
+#### full-stack — run in parallel with worktree isolation
+
+Each coder gets its own git worktree so they don't conflict. After both finish,
+the orchestrator merges their branches back into the working branch.
 
 ```python
 coder_be = Agent(
     subagent_type="general-purpose",
-    run_in_background=True,  # parallel
+    model="sonnet",
+    isolation="worktree",         # isolated git worktree
+    run_in_background=True,       # parallel
     prompt=f"""
 You are the Coder Backend. Soul: "Clean, efficient code is art"
 
@@ -169,7 +178,9 @@ When done, write summary to: {task_dir}/review/backend-summary.md
 
 coder_fe = Agent(
     subagent_type="general-purpose",
-    run_in_background=True,  # parallel
+    model="sonnet",
+    isolation="worktree",         # isolated git worktree
+    run_in_background=True,       # parallel
     prompt=f"""
 You are the Coder Frontend. Soul: "Beautiful UI is a conversation between design and code"
 
@@ -185,6 +196,18 @@ When done, write summary to: {task_dir}/review/frontend-summary.md
 )
 
 # Wait for both to finish
+# Each agent returns a result with worktree path and branch name if it made changes.
+# The orchestrator merges both branches:
+#
+#   be_result = <result from coder_be>  # contains branch name if changes made
+#   fe_result = <result from coder_fe>  # contains branch name if changes made
+#
+#   cd {repo_path}
+#   git merge <be_branch> --no-edit
+#   git merge <fe_branch> --no-edit
+#
+# If merge conflict occurs, spawn Debugger to resolve it.
+# Worktrees are auto-cleaned if the agent made no changes.
 ```
 
 ### Step 4: Spawn Reviewer
@@ -200,6 +223,7 @@ if exists(f"{task_dir}/review/frontend-summary.md"):
 
 reviewer = Agent(
     subagent_type="general-purpose",
+    model="sonnet",
     run_in_background=False,
     prompt=f"""
 You are the Reviewer. Soul: "Code quality is non-negotiable"
@@ -227,6 +251,7 @@ else:
     issues = read(f"{task_dir}/review/issues.md")
     debugger = Agent(
         subagent_type="general-purpose",
+        model="sonnet",
         run_in_background=False,
         prompt=f"""
 You are the Debugger. Soul: "Bugs fear me"
@@ -285,6 +310,7 @@ write(f"{task_dir}/commit.md", commit_md)
 ```python
 learner = Agent(
     subagent_type="general-purpose",
+    model="haiku",
     run_in_background=False,
     prompt=f"""
 You are the Learner. Soul: "Every task is a lesson"
