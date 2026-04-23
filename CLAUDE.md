@@ -64,6 +64,7 @@ ORCHESTRATOR (Main Session)
 | **Coder Frontend**  | "Beautiful UI is a conversation between design and code" | sonnet | Implement UI, verify with browser MCP |
 | **Reviewer**        | "Code quality is non-negotiable"                  | sonnet | Review code, approve or reject                 |
 | **Debugger**        | "Bugs fear me"                                    | sonnet | Fix issues found by Reviewer                   |
+| **Investigator**    | "Every bug has a birth certificate — I find it"   | sonnet | Interactive root cause investigation (on-demand) |
 | **Learner**         | "Every task is a lesson"                          | haiku  | Extract learnings, update context.md           |
 
 Model is set via `model` parameter on `Agent()` — overrides agent definition frontmatter. Learner uses haiku (lightweight task). All others use sonnet. Orchestrator can override per-task if needed (e.g. `model="opus"` for complex architecture).
@@ -102,6 +103,28 @@ Spawn agents in sequence — **this actually runs agents**:
 /workflow 20260421-143300-write-api-user-service
 /workflow --new "Task description" --target /path/to/repo
 ```
+
+### `/investigate "bug description" [--target /path/to/repo]`
+
+Interactive bug root cause investigation — **not part of the automated workflow**, runs on-demand:
+
+```
+/investigate "login button does nothing on mobile Safari" --target ~/projects/myapp
+/investigate "payment webhook 500 on retry" --target ~/projects/backend
+/investigate "useEffect runs infinitely when user updates"
+```
+
+**Flow:**
+1. User describes the bug (description, error, reproduction steps)
+2. Investigator searches the codebase and traces the call chain
+3. Returns a Root Cause Report with file:line causal chain
+4. Optionally fixes the bug if user asks (`--fix` or follow-up message)
+
+**Difference from Debugger:**
+- `Investigator` — on-demand, conversational, finds root cause of bugs the user describes
+- `Debugger` — automated workflow agent, fixes issues listed in `review/issues.md`
+
+---
 
 ### `/queue [command]`
 
@@ -179,19 +202,22 @@ agent-coding/
 │   │   ├── coder-frontend.md
 │   │   ├── reviewer.md
 │   │   ├── debugger.md
+│   │   ├── investigator.md
 │   │   ├── researcher.md
 │   │   └── learner.md
 │   ├── commands/
 │   │   ├── create-task.md    # /create-task command
 │   │   ├── check-status.md   # /check-status command
 │   │   ├── workflow.md       # /workflow command
-│   │   └── queue.md          # /queue command
+│   │   ├── queue.md          # /queue command
+│   │   └── investigate.md    # /investigate command
 │   └── skills/
 │       ├── orchestrator.md   # How to spawn agents
 │       ├── architect.md
 │       ├── code-write.md
 │       ├── code-review.md
 │       ├── debug.md
+│       ├── investigate.md
 │       └── research.md
 ├── projects/                 # Per-project context and conventions
 │   └── [project-name]/
