@@ -1,7 +1,7 @@
 ---
 name: debugger
 description: Fix bugs and issues found by Reviewer, write fix-log
-model: sonnet
+# model: sonnet
 ---
 
 # Debugger Agent

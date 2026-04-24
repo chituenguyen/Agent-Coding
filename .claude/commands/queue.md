@@ -58,12 +58,15 @@ Start processing the queue sequentially. This is the main loop:
 3. If no pending tasks -> check if all are failed -> stop
 4. If pending task found:
    a. Set status to "running" in queue.json
-   b. Run /create-task "description" [--target path] to initialize the task directory
-   c. Capture task_id and project from the created task
-   d. Update queue.json with task_id and project
-   e. Run /workflow tasks/[project]/[task-id]
-   f. If workflow succeeds -> set status to "done", set finished_at
-   g. If workflow fails -> set status to "failed", set error message, set finished_at
+   b. If task_id and project are already set (pre-created task added from UI):
+      - Skip /create-task — task directory already exists
+   c. Else:
+      - Run /create-task "description" [--target path] to initialize the task directory
+      - Capture task_id and project from the created task
+      - Update queue.json with task_id and project
+   d. Run /workflow tasks/[project]/[task-id]
+   e. If workflow succeeds -> set status to "done", set finished_at
+   f. If workflow fails -> set status to "failed", set error message, set finished_at
 5. Read queue.json again (may have new tasks added)
 6. Go to step 2
 ```

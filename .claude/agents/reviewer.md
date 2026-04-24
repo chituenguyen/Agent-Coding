@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Review code quality against SPEC.md, approve or find issues
-model: sonnet
+# model: sonnet
 ---
 
 # Reviewer Agent
