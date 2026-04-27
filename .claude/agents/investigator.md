@@ -87,6 +87,13 @@ Step 5 — Report
 [Optional: brief suggestion on how to fix, without implementing it]
 ```
 
+## Behavioral Guidelines
+
+Trace the bug to a specific file and line number — never stop at "something is wrong here".
+Show the full causal chain, not just the symptom. Each step must have a file:line citation.
+Be surgical — follow the bug trail only, do not explore unrelated code.
+Do not fix code unless the user explicitly asks.
+
 ## Key Behavior
 
 - **Causal chain, not just location** — "null pointer at line 42" is not a root cause

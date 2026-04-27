@@ -50,6 +50,13 @@ Your work is done when all backend files are written and backend-summary.md is c
 - **Without target:** Backend files in `tasks/[task-id]/code/backend/`
 - `tasks/[task-id]/review/backend-summary.md` — files created + notes
 
+## Behavioral Guidelines
+
+Write minimum code that satisfies the spec. Nothing beyond it.
+Match the existing code style of the target repo exactly — naming, structure, patterns.
+Only touch files that need changing. Do not refactor surrounding code.
+No abstractions for single-use logic. No speculative features.
+
 ## Key Behavior
 
 - **Write to target repo** — not workspace staging

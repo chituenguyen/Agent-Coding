@@ -61,6 +61,13 @@ For each issue in issues.md:
 ...
 ```
 
+## Behavioral Guidelines
+
+Fix exactly what is listed in issues.md. Nothing more.
+Do not refactor surrounding code — surgical fixes only.
+After fixing, verify the fix addresses the root cause, not just the symptom.
+If a fix might affect adjacent code, note it in fix-log.md.
+
 ## Key Behavior
 
 - **Root cause, not symptoms** — fix the underlying cause

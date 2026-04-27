@@ -5,6 +5,53 @@ import Modal from '../components/Modal'
 const MODEL_OPTIONS = ['sonnet', 'haiku', 'opus', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-6']
 const inputCls = 'w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none'
 
+// Prompt tone presets — replaces "temperature" for LLM agents
+const TONE_PRESETS = [
+  {
+    id: 'precise',
+    label: 'Precise & Strict',
+    color: 'blue',
+    description: 'Best for coding, reviewing, debugging — deterministic, no extras.',
+    snippet: `Be precise and deterministic. Prefer the simplest solution that satisfies the requirement.
+Do not add features, abstractions, or improvements beyond what was asked.
+Only state what you can verify directly from the code or spec.`,
+  },
+  {
+    id: 'strict-reviewer',
+    label: 'Strict Reviewer',
+    color: 'red',
+    description: 'Best for review/QA agents — rejects anything that deviates from spec.',
+    snippet: `Be strict. If anything deviates from the spec, list it — do not approve with reservations.
+Every issue must include a file path and line number.
+Do not invent issues beyond what the spec requires. The standard is the spec, not personal preference.`,
+  },
+  {
+    id: 'creative',
+    label: 'Creative & Exploratory',
+    color: 'violet',
+    description: 'Best for research, brainstorming, architecture — consider multiple approaches.',
+    snippet: `Think broadly. Consider multiple approaches before choosing one.
+Surface tradeoffs and alternatives — don't just pick the first solution.
+It's okay to explore adjacent ideas if they meaningfully improve the outcome.`,
+  },
+  {
+    id: 'minimal',
+    label: 'Minimal & Fast',
+    color: 'emerald',
+    description: 'Best for lightweight tasks — short answers, no explanation padding.',
+    snippet: `Be concise. Output only what is necessary — no preamble, no explanation unless asked.
+Prefer shorter code and fewer files. Avoid over-engineering.
+If something is obvious, skip the explanation.`,
+  },
+]
+
+const TONE_COLORS = {
+  blue:   { tag: 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300', btn: 'hover:bg-blue-50 dark:hover:bg-blue-950 hover:border-blue-300 dark:hover:border-blue-700' },
+  red:    { tag: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300', btn: 'hover:bg-red-50 dark:hover:bg-red-950 hover:border-red-300 dark:hover:border-red-700' },
+  violet: { tag: 'bg-violet-100 dark:bg-violet-900 text-violet-700 dark:text-violet-300', btn: 'hover:bg-violet-50 dark:hover:bg-violet-950 hover:border-violet-300 dark:hover:border-violet-700' },
+  emerald:{ tag: 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300', btn: 'hover:bg-emerald-50 dark:hover:bg-emerald-950 hover:border-emerald-300 dark:hover:border-emerald-700' },
+}
+
 // Manual fallback for pairs whose names don't match by substring
 const KNOWN_PAIRS = {
   'reviewer':       'code-review',
@@ -321,6 +368,7 @@ export default function Agents() {
                   placeholder="# Agent Name&#10;&#10;**Soul:** ...&#10;&#10;## Core Responsibilities&#10;..."
                   className={`${inputCls} font-mono text-xs resize-y`} />
               </Field>
+              <PromptTips onInsert={snippet => setAgentForm(f => ({ ...f, body: f.body ? f.body + '\n\n' + snippet : snippet }))} />
             </div>
           )}
 
@@ -525,6 +573,78 @@ function Field({ label, hint, children }) {
         {hint && <span className="text-xs text-gray-400 dark:text-gray-500 font-normal ml-1.5">— {hint}</span>}
       </label>
       {children}
+    </div>
+  )
+}
+
+function PromptTips({ onInsert }) {
+  const [open, setOpen] = useState(false)
+  const [inserted, setInserted] = useState(null)
+
+  function handleInsert(preset) {
+    onInsert(preset.snippet)
+    setInserted(preset.id)
+    setTimeout(() => setInserted(null), 1500)
+  }
+
+  return (
+    <div className="border border-amber-200 dark:border-amber-800 rounded-lg overflow-hidden">
+      {/* Header toggle */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 bg-amber-50 dark:bg-amber-950 hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors text-left"
+      >
+        <span className="text-base leading-none">💡</span>
+        <div className="flex-1 min-w-0">
+          <span className="text-xs font-semibold text-amber-800 dark:text-amber-300">Prompt Tone Tips</span>
+          <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">
+            — LLMs don't have a "temperature" knob here. Use language instead.
+          </span>
+        </div>
+        <svg className={`w-3.5 h-3.5 text-amber-500 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="px-3 pt-3 pb-4 bg-amber-50/50 dark:bg-amber-950/50 space-y-3">
+          <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+            Claude doesn't expose a temperature slider in agent definitions. Instead, the <strong>wording of your instructions</strong> controls how creative, strict, or concise the agent behaves.
+            Pick a preset below to append a tone block to your definition, or write your own.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            {TONE_PRESETS.map(preset => {
+              const c = TONE_COLORS[preset.color]
+              const done = inserted === preset.id
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => handleInsert(preset)}
+                  className={`text-left border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 transition-colors bg-white dark:bg-gray-900 ${c.btn}`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${c.tag}`}>{preset.label}</span>
+                    {done && <span className="text-xs text-green-600 dark:text-green-400 font-medium">✓ Added</span>}
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{preset.description}</p>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="border-t border-amber-200 dark:border-amber-800 pt-3">
+            <p className="text-xs text-amber-600 dark:text-amber-500 font-medium mb-1">Write your own tone instructions:</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+              <span>→ "Be deterministic. No extras."</span>
+              <span>→ "Consider multiple approaches."</span>
+              <span>→ "Output only what's necessary."</span>
+              <span>→ "Be strict. List every issue."</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

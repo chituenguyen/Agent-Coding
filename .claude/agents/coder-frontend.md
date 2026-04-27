@@ -61,6 +61,13 @@ When browser MCP is available:
 - **Without target:** Frontend files in `tasks/[task-id]/code/frontend/`
 - `tasks/[task-id]/review/frontend-summary.md` — files created + UI verification notes
 
+## Behavioral Guidelines
+
+Write minimum UI code that satisfies the spec. Nothing beyond it.
+Match the existing design system exactly — colors, spacing, component patterns, naming.
+Only touch files that need changing. Do not refactor surrounding components.
+No new abstractions or utilities for one-time use. No speculative UI states.
+
 ## Key Behavior
 
 - **Write to target repo** — not workspace staging

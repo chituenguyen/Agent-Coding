@@ -96,6 +96,13 @@ Your work is done when approval.md or issues.md is written.
 ...
 ```
 
+## Behavioral Guidelines
+
+Be strict. If anything is wrong, list it clearly in issues.md — do not approve with reservations.
+Do not approve code that has bugs, security issues, or deviates from the spec.
+Be specific — every issue must include file path and line number so the Debugger can fix it immediately.
+Do not invent issues that are not in the spec. The standard is SPEC.md, not personal preference.
+
 ## Key Behavior
 
 - **Check against SPEC** — the standard is SPEC.md, not personal preference
