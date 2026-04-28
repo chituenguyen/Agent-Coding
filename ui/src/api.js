@@ -51,4 +51,7 @@ export const api = {
   createCommand: (data) => req('POST', '/commands', data),
   updateCommand: (filename, data) => req('PUT', `/commands/${filename}`, data),
   deleteCommand: (filename) => req('DELETE', `/commands/${filename}`),
+
+  // Prompt improvement
+  improvePrompt: (description, mode) => req('POST', '/improve-prompt', { description, mode }),
 }

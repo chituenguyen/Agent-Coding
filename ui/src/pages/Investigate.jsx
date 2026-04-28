@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Terminal from '../components/Terminal'
 import { api } from '../api'
+import PromptEvaluator from '../components/PromptEvaluator'
 
 const EMPTY_FORM = {
   description: '',
@@ -86,6 +87,9 @@ export default function Investigate() {
               placeholder="e.g. Login button does nothing on mobile Safari&#10;e.g. Payment webhook fails with 500 on retry&#10;e.g. useEffect runs infinitely when user object updates"
               className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
             />
+            <div className="mt-2">
+              <PromptEvaluator value={form.description} mode="investigate" onRewrite={txt => setForm(f => ({ ...f, description: txt }))} />
+            </div>
           </div>
 
           {/* Target repo */}

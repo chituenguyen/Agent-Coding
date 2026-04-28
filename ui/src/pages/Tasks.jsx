@@ -4,6 +4,7 @@ import { api } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import Modal from '../components/Modal'
 import Terminal from '../components/Terminal'
+import PromptEvaluator from '../components/PromptEvaluator'
 
 const EMPTY_FORM = { description: '', targetPath: '' }
 
@@ -238,6 +239,9 @@ export default function Tasks() {
                 className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
                 autoFocus
               />
+              <div className="mt-2">
+                <PromptEvaluator value={form.description} mode="task" onRewrite={txt => setForm(f => ({ ...f, description: txt }))} />
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1.5">

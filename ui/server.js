@@ -568,6 +568,65 @@ app.delete('/api/commands/:filename', async (req, res) => {
   }
 })
 
+// ─── prompt improvement via claude ──────────────────────────────────────────
+
+app.post('/api/improve-prompt', async (req, res) => {
+  const { description, mode } = req.body // mode: 'task' | 'investigate'
+  if (!description?.trim()) return res.status(400).json({ error: 'description required' })
+
+  const context = mode === 'investigate'
+    ? 'The user is describing a bug to investigate (find root cause).'
+    : 'The user is describing a coding task for an AI agent (build, fix, refactor, etc.).'
+
+  const systemPrompt = `You are a prompt quality assistant for a multi-agent coding system. ${context}
+
+The user wrote this description:
+"""
+${description.trim()}
+"""
+
+Your job:
+- If the description has enough context for an AI agent to act on, rewrite it as a clear, specific, technical description. Make it concise but complete — include what, where, and expected behavior if relevant.
+- If critical information is missing (e.g. which feature, which error, which file/page/endpoint), ask 1-3 targeted clarifying questions. No more than 3.
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "action": "rewrite" | "ask",
+  "result": "improved description string" | ["question 1", "question 2"],
+  "explanation": "one short sentence on what you changed or what's missing"
+}`
+
+  try {
+    // Escape for shell
+    const escaped = systemPrompt.replace(/"/g, '\\"').replace(/\n/g, '\\n')
+    const proc = spawn(
+      `claude -p "${escaped}"`,
+      [],
+      { shell: true, cwd: WORKSPACE, env: process.env }
+    )
+
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', chunk => { stdout += chunk.toString() })
+    proc.stderr.on('data', chunk => { stderr += chunk.toString() })
+    proc.on('close', (code) => {
+      if (code !== 0) return res.status(500).json({ error: stderr || 'Claude exited with error' })
+      // Extract JSON from response (Claude may wrap in markdown)
+      const match = stdout.match(/\{[\s\S]*\}/)
+      if (!match) return res.status(500).json({ error: 'Could not parse response', raw: stdout })
+      try {
+        const parsed = JSON.parse(match[0])
+        res.json(parsed)
+      } catch {
+        res.status(500).json({ error: 'Invalid JSON from Claude', raw: stdout })
+      }
+    })
+    proc.on('error', err => res.status(500).json({ error: err.message }))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Catch-all for React SPA (production)
 app.get('*', (req, res) => {
   const indexPath = path.join(__dirname, 'dist/index.html')
