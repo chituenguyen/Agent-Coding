@@ -54,12 +54,30 @@ User --> Orchestrator (Main Session)
 
 ## Implementation
 
-### Step 1: Read task
+### Step 1: Read task + detect MCP tools
 
 ```python
 task_dir = f"tasks/{project}/{task_id}"
 input_md = read(f"{task_dir}/input.md")
 target_info = read(f"{task_dir}/target-info.md")  # if exists
+
+# Extract MCP tools section from input.md
+# If "Available MCP Tools" section exists, build an instruction block
+# to inject into EVERY agent prompt
+mcp_instruction = ""
+if "## Available MCP Tools" in input_md:
+    # Extract the section content
+    mcp_instruction = """
+## MCP Tools Available
+
+You have access to MCP tools for exploring the codebase. USE THEM before making changes:
+- Use `query` to search for symbols, execution flows, and code patterns
+- Use `context` to get a 360° view of any symbol (callers, callees, imports)
+- Use `impact` to check blast radius before modifying a symbol
+- Use `detect_changes` to understand what your changes will affect
+
+These tools give you deep codebase understanding. Always explore before coding.
+"""
 ```
 
 ### Step 2: Spawn Architect + Researcher in parallel
@@ -74,9 +92,10 @@ You are the Architect. Soul: "Designing systems is my passion"
 
 Task: {task_description}
 Target repo: {repo_path}
-
-Read the target repo to understand tech stack, then write SPEC.md to:
-{task_dir}/SPEC.md
+{mcp_instruction}
+Read the target repo to understand tech stack. Use MCP tools (if available) to explore
+the existing code graph — query symbols, understand relationships, check clusters.
+Then write SPEC.md to: {task_dir}/SPEC.md
 
 SPEC.md must include:
 - Task type: backend-only | frontend-only | full-stack
@@ -92,7 +111,7 @@ researcher = Agent(
     run_in_background=True,
     prompt=f"""
 You are the Researcher. Soul: "Knowledge is power"
-
+{mcp_instruction}
 Research: {research_topics}
 
 Write findings to: {task_dir}/research/[topic].md
@@ -118,12 +137,13 @@ coder_be = Agent(
     run_in_background=False,
     prompt=f"""
 You are the Coder Backend. Soul: "Clean, efficient code is art"
-
+{mcp_instruction}
 SPEC.md:
 {spec}
 
 Target repo: {repo_path}
 
+Use MCP tools (if available) to understand existing code structure before writing.
 Implement the backend section of SPEC. Write code directly to target repo.
 When done, write summary to: {task_dir}/review/backend-summary.md
 """
@@ -139,12 +159,13 @@ coder_fe = Agent(
     run_in_background=False,
     prompt=f"""
 You are the Coder Frontend. Soul: "Beautiful UI is a conversation between design and code"
-
+{mcp_instruction}
 SPEC.md:
 {spec}
 
 Target repo: {repo_path}
 
+Use MCP tools (if available) to understand existing code structure before writing.
 Implement the frontend section of SPEC. Write code directly to target repo.
 Use browser MCP if available to verify the UI renders correctly.
 When done, write summary to: {task_dir}/review/frontend-summary.md
@@ -227,12 +248,13 @@ reviewer = Agent(
     run_in_background=False,
     prompt=f"""
 You are the Reviewer. Soul: "Code quality is non-negotiable"
-
+{mcp_instruction}
 SPEC.md: {task_dir}/SPEC.md
 Code location: {repo_path}
 Code summaries:
 {summaries}
 
+Use MCP tools (if available) to check impact of changes and verify code relationships.
 Review the code against SPEC (both backend and frontend if full-stack).
 
 If APPROVED: write {task_dir}/review/approval.md
@@ -255,12 +277,13 @@ else:
         run_in_background=False,
         prompt=f"""
 You are the Debugger. Soul: "Bugs fear me"
-
+{mcp_instruction}
 Issues to fix:
 {issues}
 
 Code location: {repo_path}
 
+Use MCP tools (if available) to trace the root cause and check impact before fixing.
 Fix all issues. Write fix log to: {task_dir}/review/fix-log.md
 """
     )

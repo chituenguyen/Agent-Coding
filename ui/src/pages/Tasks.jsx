@@ -1,55 +1,68 @@
-import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge'
+
 import Modal from '../components/Modal'
-import Terminal from '../components/Terminal'
+import TaskFormFields from '../components/TaskFormFields'
 import PromptEvaluator from '../components/PromptEvaluator'
 
-const EMPTY_FORM = { description: '', targetPath: '' }
+const EMPTY_FORM = { description: '', targetPath: '', ticketId: '' }
+
+// ─── Task detail constants & helpers ────────────────────────────────────────
+
+const STEPS = [
+  { key: 'created', label: 'Created' },
+  { key: 'planned', label: 'Spec Written' },
+  { key: 'coded', label: 'Code Written' },
+  { key: 'reviewed', label: 'Reviewed' },
+  { key: 'done', label: 'Committed' },
+]
+const STATUS_TO_STEP = { created: 0, planned: 1, coded: 2, issues: 2, fixed: 2, approved: 3, done: 4 }
+
+// ─── Main page ───────────────────────────────────────────────────────────────
 
 export default function Tasks() {
+  const [searchParams] = useSearchParams()
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [activeProject, setActiveProject] = useState('all')
-  // step: null | 'form' | 'running'
-  const [createStep, setCreateStep] = useState(null)
+  const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
-  const [createCommand, setCreateCommand] = useState('')
-  const navigate = useNavigate()
+  const [creating, setCreating] = useState(false)
+  // Auto-select task from URL params (e.g. ?project=X&task=Y&tab=fixes)
+  const urlProject = searchParams.get('project')
+  const urlTask = searchParams.get('task')
+  const [selected, setSelected] = useState(
+    urlProject && urlTask ? { project: urlProject, taskId: urlTask } : null
+  )
 
   async function load() {
     setLoading(true)
     setError(null)
-    try {
-      setTasks(await api.getTasks())
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
-    }
+    try { setTasks(await api.getTasks()) }
+    catch (e) { setError(e.message) }
+    finally { setLoading(false) }
   }
 
   useEffect(() => { load() }, [])
 
-  function handleCreate() {
-    if (!form.description.trim()) return
-    // Build the /create-task command exactly as the CLI expects
-    const desc = form.description.trim().replace(/"/g, '\\"')
-    const target = form.targetPath.trim()
-    const cmd = target
-      ? `/create-task "${desc}" --target ${target}`
-      : `/create-task "${desc}"`
-    setCreateCommand(cmd)
-    setCreateStep('running')
-  }
-
-  function handleCreateDone() {
-    // Claude finished running /create-task — reload tasks and close modal
-    setCreateStep(null)
-    setForm(EMPTY_FORM)
-    load()
+  async function handleCreate() {
+    if (!form.description.trim() || !form.targetPath.trim()) return
+    setCreating(true)
+    try {
+      const { taskId, project } = await api.createTask({
+        description: form.description.trim(),
+        targetPath: form.targetPath.trim(),
+        ticketId: form.ticketId.trim() || undefined,
+      })
+      setShowCreate(false)
+      setForm(EMPTY_FORM)
+      await load()
+      setSelected({ project, taskId })
+    } catch (err) { alert('Failed to create task: ' + err.message) }
+    finally { setCreating(false) }
   }
 
   async function handleDelete(task, e) {
@@ -57,10 +70,9 @@ export default function Tasks() {
     if (!confirm(`Delete task "${task.description}"?`)) return
     try {
       await api.deleteTask(task.project, task.taskId)
+      if (selected?.taskId === task.taskId) setSelected(null)
       load()
-    } catch (err) {
-      alert('Failed to delete: ' + err.message)
-    }
+    } catch (err) { alert('Failed to delete: ' + err.message) }
   }
 
   async function handleClearDone() {
@@ -68,6 +80,7 @@ export default function Tasks() {
     if (!done.length) return
     if (!confirm(`Delete ${done.length} completed task${done.length !== 1 ? 's' : ''}?`)) return
     await Promise.all(done.map(t => api.deleteTask(t.project, t.taskId)))
+    if (selected && done.some(t => t.taskId === selected.taskId)) setSelected(null)
     load()
   }
 
@@ -80,215 +93,146 @@ export default function Tasks() {
   }, {})
 
   return (
-    <div className="p-8 max-w-4xl">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Tasks</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            {loading ? '...' : `${tasks.length} task${tasks.length !== 1 ? 's' : ''} across ${projects.length} project${projects.length !== 1 ? 's' : ''}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {tasks.some(t => t.status === 'done') && (
-            <button
-              onClick={handleClearDone}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:border-red-300 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    <div className="flex h-full overflow-hidden">
+      {/* ── Left: task list ── */}
+      <div className={`flex flex-col border-r border-gray-200 dark:border-gray-700 overflow-hidden transition-all ${selected ? 'w-80 xl:w-96 shrink-0' : 'flex-1 max-w-3xl'}`}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white">Tasks</h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              {loading ? '...' : `${tasks.length} task${tasks.length !== 1 ? 's' : ''}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {tasks.some(t => t.status === 'done') && (
+              <button onClick={handleClearDone}
+                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 rounded-md transition-colors" title="Clear done">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            )}
+            <button onClick={() => setShowCreate(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              Clear done
+              New
             </button>
+          </div>
+        </div>
+
+        {/* Project filter */}
+        {!loading && projects.length > 1 && (
+          <div className="flex items-center gap-1.5 px-6 pb-3 flex-wrap shrink-0">
+            <button onClick={() => setActiveProject('all')}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${activeProject === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+              All <span className={`ml-1 px-1.5 py-0.5 rounded-full text-xs ${activeProject === 'all' ? 'bg-indigo-500' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>{tasks.length}</span>
+            </button>
+            {projects.map(p => (
+              <button key={p} onClick={() => setActiveProject(p)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${activeProject === p ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                {p} <span className={`ml-1 px-1.5 py-0.5 rounded-full text-xs ${activeProject === p ? 'bg-indigo-500' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>{tasks.filter(t => t.project === p).length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
+          {loading ? (
+            <div className="flex items-center gap-2 text-gray-400 dark:text-gray-500 text-sm py-8">
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+              Loading...
+            </div>
+          ) : error ? (
+            <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+          ) : tasks.length === 0 ? (
+            <div className="text-center py-16 text-gray-400 dark:text-gray-500">
+              <div className="w-14 h-14 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-3">
+                <svg className="w-7 h-7 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <p className="font-medium text-gray-600 dark:text-gray-300 text-sm">No tasks yet</p>
+              <button onClick={() => setShowCreate(true)}
+                className="mt-3 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors">
+                Create first task
+              </button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 dark:text-gray-500 text-sm">No tasks in this project</div>
+          ) : (
+            <div className="space-y-5">
+              {Object.entries(grouped).map(([project, projectTasks]) => (
+                <div key={project}>
+                  {activeProject === 'all' && (
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{project}</h2>
+                      <span className="text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full">{projectTasks.length}</span>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    {projectTasks.map(task => (
+                      <TaskRow key={task.taskId} task={task}
+                        selected={selected?.taskId === task.taskId}
+                        onClick={() => setSelected({ project: task.project, taskId: task.taskId })}
+                        onDelete={e => handleDelete(task, e)} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-          <button
-            onClick={() => setCreateStep('form')}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            New Task
-          </button>
         </div>
       </div>
 
-      {/* Project filter tabs */}
-      {!loading && projects.length > 1 && (
-        <div className="flex items-center gap-1.5 mb-5 flex-wrap">
-          <button
-            onClick={() => setActiveProject('all')}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              activeProject === 'all'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-            }`}
-          >
-            All
-            <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${activeProject === 'all' ? 'bg-indigo-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
-              {tasks.length}
-            </span>
-          </button>
-          {projects.map(p => (
-            <button
-              key={p}
-              onClick={() => setActiveProject(p)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                activeProject === p
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-              }`}
-            >
-              {p}
-              <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${activeProject === p ? 'bg-indigo-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
-                {tasks.filter(t => t.project === p).length}
-              </span>
-            </button>
-          ))}
+      {/* ── Right: detail panel ── */}
+      {selected ? (
+        <div className="flex-1 overflow-y-auto">
+          <TaskDetailPanel
+            key={selected.taskId}
+            project={selected.project}
+            taskId={selected.taskId}
+            onClose={() => setSelected(null)}
+            onDeleted={() => { setSelected(null); load() }}
+          />
         </div>
-      )}
-
-      {/* Content */}
-      {loading ? (
-        <div className="flex items-center gap-2 text-gray-400 dark:text-gray-500 text-sm py-8">
-          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-          </svg>
-          Loading tasks...
-        </div>
-      ) : error ? (
-        <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
-      ) : tasks.length === 0 ? (
-        <div className="text-center py-20 text-gray-400 dark:text-gray-500">
-          <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-          </div>
-          <p className="font-medium text-gray-600 dark:text-gray-300">No tasks yet</p>
-          <p className="text-sm mt-1">Create a task and run the multi-agent workflow</p>
-          <button
-            onClick={() => setCreateStep('form')}
-            className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            Create your first task
-          </button>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-12 text-gray-400 dark:text-gray-500 text-sm">No tasks in this project</div>
       ) : (
-        <div className="space-y-6">
-          {Object.entries(grouped).map(([project, projectTasks]) => (
-            <div key={project}>
-              {activeProject === 'all' && (
-                <div className="flex items-center gap-2 mb-2">
-                  <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    {project}
-                  </h2>
-                  <span className="text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full">
-                    {projectTasks.length}
-                  </span>
-                </div>
-              )}
-              <div className="space-y-1.5">
-                {projectTasks.map((task) => (
-                  <TaskRow key={task.taskId} task={task} onClick={() => navigate(`/tasks/${task.project}/${task.taskId}`)} onDelete={(e) => handleDelete(task, e)} />
-                ))}
-              </div>
-            </div>
-          ))}
+        <div className="flex-1 flex items-center justify-center text-gray-300 dark:text-gray-700">
+          <div className="text-center">
+            <svg className="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <p className="text-sm">Select a task to view details</p>
+          </div>
         </div>
       )}
 
-      {/* Step 1: Form */}
-      {createStep === 'form' && (
-        <Modal
-          title="New Task"
-          onClose={() => { setCreateStep(null); setForm(EMPTY_FORM) }}
-          footer={
-            <>
-              <button
-                onClick={() => { setCreateStep(null); setForm(EMPTY_FORM) }}
-                className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreate}
-                disabled={!form.description.trim()}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Create Task →
-              </button>
-            </>
-          }
-        >
+      {/* Create modal */}
+      {showCreate && (
+        <Modal title="New Task" onClose={() => { setShowCreate(false); setForm(EMPTY_FORM) }}
+          footer={<>
+            <button onClick={() => { setShowCreate(false); setForm(EMPTY_FORM) }}
+              className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={handleCreate} disabled={creating || !form.description.trim() || !form.targetPath.trim()}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {creating ? 'Creating...' : 'Create Task →'}
+            </button>
+          </>}>
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1.5">
-                What do you want to build or fix? <span className="text-red-400">*</span>
-              </label>
-              <textarea
-                rows={4}
-                value={form.description}
-                onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
-                onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreate() }}
-                placeholder="e.g. Build a login API with JWT authentication..."
-                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
-                autoFocus
-              />
-              <div className="mt-2">
-                <PromptEvaluator value={form.description} mode="task" onRewrite={txt => setForm(f => ({ ...f, description: txt }))} />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1.5">
-                Target Repository <span className="text-gray-400 dark:text-gray-500 font-normal">(optional)</span>
-              </label>
-              <input
-                type="text"
-                value={form.targetPath}
-                onChange={(e) => setForm(f => ({ ...f, targetPath: e.target.value }))}
-                placeholder="/path/to/your/repo"
-                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none font-mono"
-              />
-              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">
-                Absolute path to the repo. Leave empty → outputs to <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">tasks/workspace/</code>
-              </p>
-            </div>
-            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg px-3 py-2 border border-gray-200 dark:border-gray-700">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Will run: <code className="text-indigo-600 font-mono">
-                  /create-task "{form.description.trim() || '...'}"
-                  {form.targetPath.trim() ? ` --target ${form.targetPath.trim()}` : ''}
-                </code>
-              </p>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Step 2: Running /create-task via Claude */}
-      {createStep === 'running' && (
-        <Modal
-          title="Creating task..."
-          onClose={handleCreateDone}
-          wide
-        >
-          <div className="space-y-3">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Running <code className="text-indigo-600 font-mono text-xs bg-indigo-50 dark:bg-indigo-950 px-1.5 py-0.5 rounded">{createCommand}</code>
-            </p>
-            <Terminal
-              command={createCommand}
-              autoStart
-              onDone={handleCreateDone}
+            <TaskFormFields
+              description={form.description} onDescriptionChange={txt => setForm(f => ({ ...f, description: txt }))}
+              targetRepo={form.targetPath} onTargetChange={v => setForm(f => ({ ...f, targetPath: v }))}
+              ticketId={form.ticketId} onTicketChange={v => setForm(f => ({ ...f, ticketId: v }))}
+              mode="task" descriptionLabel="What do you want to build or fix?"
+              placeholder="e.g. Build a login API with JWT authentication..."
+              autoFocus onSubmit={handleCreate} targetRequired
             />
-            <p className="text-xs text-gray-400 dark:text-gray-500 text-center">
-              Task will appear in the list when done. You can close this at any time.
-            </p>
           </div>
         </Modal>
       )}
@@ -296,38 +240,779 @@ export default function Tasks() {
   )
 }
 
-function TaskRow({ task, onClick, onDelete }) {
+// ─── Task row ────────────────────────────────────────────────────────────────
+
+function TaskRow({ task, selected, onClick, onDelete }) {
   const date = task.created
     ? new Date(task.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : ''
 
   return (
-    <div
-      onClick={onClick}
-      className="flex items-center gap-4 px-4 py-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-300 hover:shadow-sm cursor-pointer transition-all group"
-    >
+    <div onClick={onClick}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all group ${
+        selected
+          ? 'bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-700'
+          : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 hover:border-indigo-200 dark:hover:border-indigo-800 hover:shadow-sm'
+      }`}>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-gray-900 dark:text-white truncate group-hover:text-indigo-700 transition-colors">
+        <p className={`text-sm font-medium truncate transition-colors ${selected ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-900 dark:text-white group-hover:text-indigo-700 dark:group-hover:text-indigo-300'}`}>
           {task.description}
         </p>
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 font-mono truncate">{task.taskId}</p>
+        {date && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{date}</p>}
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-1.5 shrink-0">
         <StatusBadge status={task.status} />
-        {date && <span className="text-xs text-gray-400 dark:text-gray-500">{date}</span>}
-        <button
-          onClick={onDelete}
-          title="Delete task"
-          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-all"
-        >
+        <button onClick={onDelete} title="Delete"
+          className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-all">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
         </button>
-        <svg className="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      </div>
+    </div>
+  )
+}
+
+// ─── Task detail panel ───────────────────────────────────────────────────────
+
+function TaskDetailPanel({ project, taskId, onClose, onDeleted }) {
+  const [task, setTask] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [fixes, setFixes] = useState([])
+  const [subtasks, setSubtasks] = useState([])
+  const [fixModal, setFixModal] = useState(false)
+  const [fixDesc, setFixDesc] = useState('')
+  const [fixCreating, setFixCreating] = useState(false)
+  const [subtaskModal, setSubtaskModal] = useState(false)
+  const [subtaskDesc, setSubtaskDesc] = useState('')
+  const [subtaskCreating, setSubtaskCreating] = useState(false)
+  const [toast, setToast] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const detailTab = searchParams.get('tab') || 'overview'
+  const setDetailTab = (tab) => setSearchParams(prev => { prev.set('tab', tab); return prev }, { replace: true })
+
+  const showToast = (msg, color = 'green') => {
+    setToast({ msg, color })
+    setTimeout(() => setToast(null), 3500)
+  }
+
+  async function load() {
+    setLoading(true)
+    try { setTask(await api.getTask(project, taskId)) } catch { }
+    finally { setLoading(false) }
+  }
+  async function refresh() { try { setTask(await api.getTask(project, taskId)) } catch { } }
+  async function loadFixes() { try { setFixes(await api.getFixes(project, taskId)) } catch { } }
+  async function loadSubtasks() { try { setSubtasks(await api.getSubtasks(project, taskId)) } catch { } }
+
+  useEffect(() => { load(); loadFixes(); loadSubtasks() }, [project, taskId])
+
+  // Poll task + fixes/subtasks when anything is active (running/queued/non-done task)
+  const hasActiveChild = [...fixes, ...subtasks].some(i => i.status === 'running' || i.status === 'queued')
+  const taskInProgress = task && task.status !== 'done' && task.status !== 'created'
+  useEffect(() => {
+    if (!hasActiveChild && !taskInProgress) return
+    const t = setInterval(() => { refresh(); loadFixes(); loadSubtasks() }, 3000)
+    return () => clearInterval(t)
+  }, [hasActiveChild, taskInProgress])
+
+  const { state: queueState, addToQueue } = useAddToQueue()
+
+  async function handleDelete() {
+    if (!confirm(`Delete task "${task?.description}"?`)) return
+    try { await api.deleteTask(project, taskId); onDeleted() }
+    catch (err) { alert('Failed: ' + err.message) }
+  }
+
+  async function handleCreateSubtask() {
+    if (!subtaskDesc.trim()) return
+    setSubtaskCreating(true)
+    try {
+      await api.createSubtask(project, taskId, { description: subtaskDesc.trim() })
+      setSubtaskModal(false)
+      setSubtaskDesc('')
+      await loadSubtasks()
+      showToast('Sub-task created', 'violet')
+    } catch (err) { alert('Failed: ' + err.message) }
+    finally { setSubtaskCreating(false) }
+  }
+
+  async function handleCreateFix() {
+    if (!fixDesc.trim()) return
+    setFixCreating(true)
+    try {
+      await api.createFix(project, taskId, { bugDescription: fixDesc.trim() })
+      setFixModal(false)
+      setFixDesc('')
+      await loadFixes()
+      showToast('Bug fix created', 'orange')
+    } catch (err) { alert('Failed: ' + err.message) }
+    finally { setFixCreating(false) }
+  }
+
+  async function handleQueueItem(type, item) {
+    try {
+      if (type === 'fix') {
+        const desc = item.bugMd?.match(/## Description\s*\n+([\s\S]+?)(\n\n|$)/)?.[1]?.trim() || item.fixId
+        await api.addFixToQueue(project, taskId, item.fixId, item.fixPath, desc)
+      } else {
+        await api.addSubtaskToQueue(project, taskId, item.subtaskId, item.subtaskPath, item.description)
+      }
+      type === 'fix' ? await loadFixes() : await loadSubtasks()
+      showToast(`${type === 'fix' ? 'Bug fix' : 'Sub-task'} added to queue`, type === 'fix' ? 'orange' : 'violet')
+    } catch (err) { alert('Failed: ' + err.message) }
+  }
+
+  async function handleResetItem(type, item) {
+    const label = type === 'fix' ? 'bug fix' : 'sub-task'
+    if (!confirm(`Reset this ${label}? All generated files (SPEC, code, review) will be deleted. Only the original description will be kept.`)) return
+    try {
+      if (type === 'fix') {
+        await api.resetFix(project, taskId, item.fixId)
+        await loadFixes()
+      } else {
+        await api.resetSubtask(project, taskId, item.subtaskId)
+        await loadSubtasks()
+      }
+      showToast(`${label.charAt(0).toUpperCase() + label.slice(1)} reset to created`, 'green')
+    } catch (err) { alert('Failed: ' + err.message) }
+  }
+
+  async function handleDeleteItem(type, item) {
+    const label = type === 'fix' ? 'bug fix' : 'sub-task'
+    if (!confirm(`Delete this ${label}?`)) return
+    try {
+      if (type === 'fix') {
+        await api.deleteFix(project, taskId, item.fixId)
+        await loadFixes()
+      } else {
+        await api.deleteSubtask(project, taskId, item.subtaskId)
+        await loadSubtasks()
+      }
+      showToast(`${label.charAt(0).toUpperCase() + label.slice(1)} deleted`, 'green')
+    } catch (err) { alert('Failed: ' + err.message) }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-gray-400 dark:text-gray-500 text-sm p-8">
+        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+        </svg>
+        Loading...
+      </div>
+    )
+  }
+
+  if (!task) return <div className="p-8 text-sm text-gray-400 dark:text-gray-500">Task not found.</div>
+
+  const stepIndex = STATUS_TO_STEP[task.status] ?? 0
+  const hasIssues = task.status === 'issues'
+  const inProgressStep = taskInProgress && stepIndex < STEPS.length - 1 ? stepIndex + 1 : -1
+
+  return (
+    <div className="p-6 max-w-2xl relative">
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl shadow-lg text-white text-sm font-medium flex items-center gap-2 transition-all ${
+          toast.color === 'violet' ? 'bg-violet-600' : toast.color === 'orange' ? 'bg-orange-500' : 'bg-green-600'
+        }`}>
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{task.taskId}</span>
+            <span className="text-gray-300 dark:text-gray-600">·</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">{task.project}</span>
+            {task.targetPath && task.targetPath !== 'N/A' && (
+              <>
+                <span className="text-gray-300 dark:text-gray-600">·</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 font-mono truncate max-w-xs">{task.targetPath}</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <StatusBadge status={task.status} />
+            <AddToQueueBtn state={queueState} onClick={() => addToQueue(task)} />
+            {task.status === 'done' && (
+              <>
+                <button onClick={() => { setDetailTab('subtasks'); setSubtaskDesc(''); setSubtaskModal(true) }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950 rounded-lg transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
+                  Sub-task
+                </button>
+                <button onClick={() => { setDetailTab('fixes'); setFixDesc(''); setFixModal(true) }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-orange-200 dark:border-orange-800 text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950 rounded-lg transition-colors">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                  Fix Bug
+                </button>
+              </>
+            )}
+            <button onClick={handleDelete} title="Delete task"
+              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 rounded-md transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+            <button onClick={onClose} title="Close"
+              className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <DescriptionCard description={task.description} />
+      </div>
+
+      {/* Progress steps */}
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4 mb-4">
+        <div className="flex items-center">
+          {STEPS.map((step, i) => (
+            <div key={step.key} className="flex items-center flex-1 last:flex-none">
+              <div className="flex flex-col items-center">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all ${
+                  i < stepIndex ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : i === stepIndex ? hasIssues ? 'bg-red-500 border-red-500 text-white' : 'bg-indigo-600 border-indigo-600 text-white ring-4 ring-indigo-100 dark:ring-indigo-900'
+                  : i === inProgressStep ? 'bg-yellow-400 border-yellow-400 text-yellow-900 ring-4 ring-yellow-100 dark:ring-yellow-900 animate-pulse'
+                  : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600'
+                }`}>
+                  {i < stepIndex ? (
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                  ) : i === inProgressStep ? (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                    </svg>
+                  ) : <span>{i + 1}</span>}
+                </div>
+                <span className={`text-xs mt-1 whitespace-nowrap font-medium ${
+                  i <= stepIndex ? 'text-gray-700 dark:text-gray-200'
+                  : i === inProgressStep ? 'text-yellow-600 dark:text-yellow-400'
+                  : 'text-gray-300 dark:text-gray-600'
+                }`}>{i === inProgressStep ? `${step.label}...` : step.label}</span>
+              </div>
+              {i < STEPS.length - 1 && (
+                <div className={`flex-1 h-0.5 mx-1.5 mb-5 transition-all ${
+                  i < stepIndex ? 'bg-indigo-600'
+                  : i === stepIndex && inProgressStep > stepIndex ? 'bg-yellow-300 dark:bg-yellow-700 animate-pulse'
+                  : 'bg-gray-200 dark:bg-gray-700'
+                }`} />
+              )}
+            </div>
+          ))}
+        </div>
+        {hasIssues && (
+          <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 flex items-start gap-2">
+            <svg className="w-4 h-4 text-red-500 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+            </svg>
+            <p className="text-xs text-red-600 dark:text-red-400">Reviewer found issues. Run the workflow again or check the Issues file below.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs — only shown for done tasks */}
+      {task.status === 'done' && (
+        <div className="flex items-center gap-0.5 mb-4 border-b border-gray-200 dark:border-gray-700">
+          {[
+            { key: 'overview', label: 'Overview' },
+            { key: 'fixes', label: 'Bug Fixes', count: fixes.length, color: 'orange' },
+            { key: 'subtasks', label: 'Sub-tasks', count: subtasks.length, color: 'violet' },
+          ].map(tab => (
+            <button key={tab.key} onClick={() => setDetailTab(tab.key)}
+              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+                detailTab === tab.key
+                  ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 dark:border-indigo-400'
+                  : 'border-transparent text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
+              }`}>
+              {tab.label}
+              {tab.count > 0 && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold leading-none ${
+                  detailTab === tab.key
+                    ? tab.color === 'orange' ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/40 dark:text-orange-400'
+                      : tab.color === 'violet' ? 'bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-400'
+                      : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-400'
+                    : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                }`}>{tab.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Tab: Overview (output files) — shown always for non-done, or when overview tab selected */}
+      {(task.status !== 'done' || detailTab === 'overview') && (task.files.spec || task.files.approval || task.files.issues || task.files.commit ||
+        task.files.backendSummary || task.files.frontendSummary || task.files.fixLog) && (
+        <div className="mb-4">
+          {task.status !== 'done' && (
+            <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Output Files
+            </h2>
+          )}
+          <div className="space-y-2">
+            {task.files.spec && <FileCard title="SPEC.md" content={task.files.spec} />}
+            {task.files.backendSummary && <FileCard title="Backend Summary" content={task.files.backendSummary} />}
+            {task.files.frontendSummary && <FileCard title="Frontend Summary" content={task.files.frontendSummary} />}
+            {task.files.issues && <FileCard title="Issues Found" content={task.files.issues} variant="red" defaultOpen />}
+            {task.files.fixLog && <FileCard title="Fix Log" content={task.files.fixLog} variant="orange" />}
+            {task.files.approval && <FileCard title="Approval" content={task.files.approval} variant="green" defaultOpen />}
+            {task.files.commit && <FileCard title="Commit Info" content={task.files.commit} variant="indigo" defaultOpen />}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Bug Fixes */}
+      {task.status === 'done' && detailTab === 'fixes' && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs text-gray-400 dark:text-gray-500">Report and track bug fixes for this completed task.</p>
+            <button onClick={() => { setFixDesc(''); setFixModal(true) }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Report Bug
+            </button>
+          </div>
+          {fixes.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 dark:text-gray-500">
+              <svg className="w-10 h-10 mx-auto mb-2 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <p className="text-xs">No bug fixes reported yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {fixes.map(fix => (
+                <ChildRow key={fix.fixId} item={fix} type="fix"
+                  onQueue={() => handleQueueItem('fix', fix)}
+
+                  onDelete={() => handleDeleteItem('fix', fix)}
+                  onReset={() => handleResetItem('fix', fix)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Sub-tasks */}
+      {task.status === 'done' && detailTab === 'subtasks' && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs text-gray-400 dark:text-gray-500">Add follow-up work that builds on this completed task.</p>
+            <button onClick={() => { setSubtaskDesc(''); setSubtaskModal(true) }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Sub-task
+            </button>
+          </div>
+          {subtasks.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 dark:text-gray-500">
+              <svg className="w-10 h-10 mx-auto mb-2 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <p className="text-xs">No sub-tasks yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {subtasks.map(st => (
+                <ChildRow key={st.subtaskId} item={st} type="subtask"
+                  onQueue={() => handleQueueItem('subtask', st)}
+
+                  onDelete={() => handleDeleteItem('subtask', st)}
+                  onReset={() => handleResetItem('subtask', st)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sub-task modal */}
+      {subtaskModal && (
+        <Modal title="New Sub-task" onClose={() => setSubtaskModal(false)}
+          footer={<>
+            <button onClick={() => setSubtaskModal(false)}
+              className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={handleCreateSubtask} disabled={subtaskCreating || !subtaskDesc.trim()}
+              className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {subtaskCreating ? 'Creating...' : 'Create →'}
+            </button>
+          </>}>
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Describe what to build next. Agents will use the original task's SPEC, implementation, and all prior changes as context — building on top without duplicating or conflicting.
+            </p>
+            <textarea
+              value={subtaskDesc}
+              onChange={e => setSubtaskDesc(e.target.value)}
+              placeholder="e.g. Add OAuth login with Google and GitHub providers."
+              rows={4}
+              autoFocus
+              className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none resize-none"
+              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreateSubtask() }}
+            />
+            {task.targetPath && task.targetPath !== 'N/A' && (
+              <PromptEvaluator
+                value={subtaskDesc}
+                targetRepo={task.targetPath}
+                mode="subtask"
+                onRewrite={txt => setSubtaskDesc(txt)}
+              />
+            )}
+            <p className="text-xs text-gray-400 dark:text-gray-500">Cmd+Enter to add to queue</p>
+          </div>
+        </Modal>
+      )}
+
+      {/* Fix Bug modal */}
+      {fixModal && (
+        <Modal title="Report a Bug" onClose={() => setFixModal(false)}
+          footer={<>
+            <button onClick={() => setFixModal(false)}
+              className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={handleCreateFix} disabled={fixCreating || !fixDesc.trim()}
+              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {fixCreating ? 'Creating...' : 'Create →'}
+            </button>
+          </>}>
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Describe the bug clearly. The AI will use the original task's SPEC, approval, and all prior fixes as context to trace the root cause and apply a surgical fix.
+            </p>
+            <textarea
+              value={fixDesc}
+              onChange={e => setFixDesc(e.target.value)}
+              placeholder="e.g. The login button does nothing after clicking. Expected: redirect to dashboard."
+              rows={4}
+              autoFocus
+              className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none resize-none"
+              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleCreateFix() }}
+            />
+            {task.targetPath && task.targetPath !== 'N/A' && (
+              <PromptEvaluator
+                value={fixDesc}
+                targetRepo={task.targetPath}
+                mode="fix"
+                onRewrite={txt => setFixDesc(txt)}
+              />
+            )}
+            <p className="text-xs text-gray-400 dark:text-gray-500">Cmd+Enter to add to queue</p>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ─── Child row (fix or subtask) ──────────────────────────────────────────────
+
+const CHILD_STATUS = {
+  queued:      { label: 'Queued',      cls: 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400' },
+  running:     { label: 'Running',     cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300' },
+  investigated:{ label: 'Investigated',cls: 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' },
+  debugged:    { label: 'Debugged',    cls: 'bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300' },
+  planned:     { label: 'Planned',     cls: 'bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300' },
+  approved:    { label: 'Approved',    cls: 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' },
+  issues:      { label: 'Issues',      cls: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300' },
+  fixed:       { label: 'Fixed',       cls: 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' },
+  done:        { label: 'Done',        cls: 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' },
+  failed:      { label: 'Failed',      cls: 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300' },
+  created:     { label: 'Created',     cls: 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400' },
+}
+
+const FIX_STEPS = [
+  { key: 'created', label: 'Created' },
+  { key: 'investigated', label: 'Investigated' },
+  { key: 'debugged', label: 'Debugged' },
+  { key: 'reviewed', label: 'Reviewed' },
+  { key: 'fixed', label: 'Fixed' },
+]
+const FIX_STATUS_TO_STEP = { created: 0, investigated: 1, debugged: 2, issues: 3, approved: 3, fixed: 4, done: 4 }
+
+const SUBTASK_STEPS = [
+  { key: 'created', label: 'Created' },
+  { key: 'planned', label: 'Spec Written' },
+  { key: 'coded', label: 'Code Written' },
+  { key: 'reviewed', label: 'Reviewed' },
+  { key: 'done', label: 'Committed' },
+]
+const SUBTASK_STATUS_TO_STEP = { created: 0, planned: 1, coded: 2, issues: 3, approved: 3, done: 4 }
+
+function ChildRow({ item, type, onQueue, onDelete, onReset }) {
+  const isActiveStatus = item.status === 'running' || item.status === 'queued'
+  const [expanded, setExpanded] = useState(isActiveStatus)
+  const cfg = CHILD_STATUS[item.status] ?? CHILD_STATUS.created
+  const isFix = type === 'fix'
+  const isTerminal = item.status === 'done' || item.status === 'fixed'
+  const isActive_ = item.status === 'running' || item.status === 'queued'
+  const isStalled = !isTerminal && !isActive_ && item.status !== 'created'
+  // can act: created, failed, or stalled (stuck mid-workflow)
+  const canAct = item.status === 'created' || item.status === 'failed' || isStalled
+  const desc = isFix
+    ? item.bugMd?.match(/## Description\s*\n+([\s\S]+?)(\n\n|$)/)?.[1]?.trim().slice(0, 120) || item.fixId
+    : item.description?.slice(0, 120) || item.subtaskId
+  const fullContent = isFix ? item.bugMd : item.inputMd
+  const steps = isFix ? FIX_STEPS : SUBTASK_STEPS
+  const statusMap = isFix ? FIX_STATUS_TO_STEP : SUBTASK_STATUS_TO_STEP
+  // When running, use subStep (real filesystem progress) for the stepper
+  const effectiveStatus = (item.status === 'running' && item.subStep) ? item.subStep : item.status
+  const stepIndex = statusMap[effectiveStatus] ?? 0
+  const isRunning = item.status === 'running' || item.status === 'queued'
+  const hasIssues = effectiveStatus === 'issues'
+  const idDate = (() => {
+    const m = (item.fixId || item.subtaskId || '').match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/)
+    if (!m) return ''
+    return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  })()
+
+  return (
+    <div className={`rounded-lg border transition-all ${
+      isActiveStatus
+        ? isFix ? 'border-orange-300 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-950/30' : 'border-violet-300 dark:border-violet-700 bg-violet-50/60 dark:bg-violet-950/30'
+        : isFix ? 'border-orange-100 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/20'
+               : 'border-violet-100 dark:border-violet-900/40 bg-violet-50/40 dark:bg-violet-950/20'
+    }`}>
+      <div className="flex items-start gap-3 px-3 py-2.5 cursor-pointer" onClick={() => setExpanded(e => !e)}>
+        {/* icon */}
+        <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+          isFix ? 'bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-400'
+                 : 'bg-violet-100 dark:bg-violet-900 text-violet-600 dark:text-violet-400'
+        }`}>
+          {item.status === 'running' ? (
+            <svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+          ) : (item.status === 'fixed' || item.status === 'done') ? (
+            <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+          ) : (
+            <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              {isFix
+                ? <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                : <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              }
+            </svg>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-gray-700 dark:text-gray-200 leading-relaxed">{desc}</p>
+          {idDate && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{idDate}</p>}
+        </div>
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${
+          isStalled ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' : cfg.cls
+        } ${item.status === 'running' ? 'animate-pulse' : ''}`}>
+          {isStalled && (
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01" />
+            </svg>
+          )}
+          {isStalled ? 'Stalled' : isRunning && item.subStep ? `Running · ${(statusMap[item.subStep] ?? 0) + 1}/${steps.length}` : cfg.label}
+        </span>
+        <svg className={`w-3.5 h-3.5 shrink-0 text-gray-400 dark:text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </div>
+      {/* Expanded detail */}
+      {expanded && (
+        <div className={`px-3 pb-3 border-t ${
+          isFix ? 'border-orange-100 dark:border-orange-900/40' : 'border-violet-100 dark:border-violet-900/40'
+        }`}>
+          {/* Progress stepper — show when there's progress or running */}
+          {stepIndex > 0 || isRunning ? (
+            <div className="flex items-center mt-3 mb-2">
+              {steps.map((step, i) => (
+                <div key={step.key} className="flex items-center flex-1 last:flex-none">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold border-2 transition-all ${
+                      i < stepIndex ? (isFix ? 'bg-orange-500 border-orange-500' : 'bg-violet-500 border-violet-500') + ' text-white'
+                      : i === stepIndex ? hasIssues ? 'bg-red-500 border-red-500 text-white'
+                        : (isFix ? 'bg-orange-500 border-orange-500 ring-2 ring-orange-200 dark:ring-orange-900' : 'bg-violet-500 border-violet-500 ring-2 ring-violet-200 dark:ring-violet-900') + ' text-white'
+                      : isRunning && i === stepIndex + 1 ? 'bg-yellow-400 border-yellow-400 text-yellow-900 animate-pulse'
+                      : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600'
+                    }`}>
+                      {i < stepIndex ? (
+                        <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                      ) : isRunning && i === stepIndex + 1 ? (
+                        <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                      ) : <span>{i + 1}</span>}
+                    </div>
+                    <span className={`text-[9px] mt-0.5 whitespace-nowrap font-medium ${
+                      i <= stepIndex ? 'text-gray-600 dark:text-gray-300'
+                      : isRunning && i === stepIndex + 1 ? 'text-yellow-600 dark:text-yellow-400'
+                      : 'text-gray-300 dark:text-gray-600'
+                    }`}>{step.label}</span>
+                  </div>
+                  {i < steps.length - 1 && (
+                    <div className={`flex-1 h-0.5 mx-1 mb-4 transition-all ${
+                      i < stepIndex ? (isFix ? 'bg-orange-500' : 'bg-violet-500')
+                      : isRunning && i === stepIndex ? 'bg-yellow-300 dark:bg-yellow-700 animate-pulse'
+                      : 'bg-gray-200 dark:bg-gray-700'
+                    }`} />
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {fullContent && (
+            <pre className="mt-2 text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap font-mono bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-md p-3 max-h-64 overflow-auto leading-relaxed">{fullContent}</pre>
+          )}
+        </div>
+      )}
+      {/* Action buttons — shown when item can be actioned */}
+      {canAct && (
+        <div className={`flex items-center gap-2 px-3 pb-2.5 border-t pt-2 ${
+          isFix ? 'border-orange-100 dark:border-orange-900/40' : 'border-violet-100 dark:border-violet-900/40'
+        }`}>
+          <button onClick={e => { e.stopPropagation(); onQueue() }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              isFix ? 'bg-orange-600 hover:bg-orange-700 text-white' : 'bg-violet-600 hover:bg-violet-700 text-white'
+            }`}>
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h7" />
+            </svg>
+            Add to Queue
+          </button>
+          {isStalled && (
+            <button onClick={e => { e.stopPropagation(); onReset() }}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Reset
+            </button>
+          )}
+          <div className="flex-1" />
+          <button onClick={e => { e.stopPropagation(); onDelete() }} title="Delete"
+            className="p-1 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 rounded transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Shared sub-components ───────────────────────────────────────────────────
+
+function useAddToQueue() {
+  const [state, setState] = useState('idle')
+  async function addToQueue(task) {
+    setState('loading')
+    try {
+      await api.addToQueue({
+        description: task.description,
+        target: task.targetPath && task.targetPath !== 'N/A' ? task.targetPath : undefined,
+        task_id: task.taskId,
+        project: task.project,
+        task_path: `tasks/${task.project}/${task.taskId}`,
+      })
+      setState('done')
+      setTimeout(() => setState('idle'), 2000)
+    } catch {
+      setState('error')
+      setTimeout(() => setState('idle'), 2000)
+    }
+  }
+  return { state, addToQueue }
+}
+
+function AddToQueueBtn({ state, onClick }) {
+  const config = {
+    idle:    { label: 'Add to Queue', cls: 'text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950' },
+    loading: { label: 'Adding...', cls: 'text-gray-400 border-gray-200 dark:border-gray-700 cursor-not-allowed' },
+    done:    { label: 'Added!', cls: 'text-green-600 border-green-200 bg-green-50 dark:bg-green-950' },
+    error:   { label: 'Failed', cls: 'text-red-500 border-red-200 bg-red-50 dark:bg-red-950' },
+  }
+  const { label, cls } = config[state] ?? config.idle
+  return (
+    <button onClick={onClick} disabled={state !== 'idle'}
+      className={`px-2.5 py-1 text-xs font-medium border rounded-lg transition-colors ${cls}`}>
+      {label}
+    </button>
+  )
+}
+
+function DescriptionCard({ description }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = description.length > 200
+  return (
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5">
+      {isLong && !expanded ? (
+        <>
+          <p className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed whitespace-pre-wrap">
+            {description.slice(0, 200).trim()}...
+          </p>
+          <button onClick={() => setExpanded(true)}
+            className="mt-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-medium">
+            Show more
+          </button>
+        </>
+      ) : (
+        <>
+          <pre className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed whitespace-pre-wrap break-words font-sans max-h-60 overflow-y-auto">
+            {description}
+          </pre>
+          {isLong && (
+            <button onClick={() => setExpanded(false)}
+              className="mt-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-medium">
+              Show less
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function FileCard({ title, content, variant = 'default', defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+  const variants = {
+    default: { header: 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700', text: 'text-gray-700 dark:text-gray-200', body: 'bg-white dark:bg-gray-900' },
+    green:   { header: 'bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800 hover:bg-green-100', text: 'text-green-800 dark:text-green-300', body: 'bg-green-50 dark:bg-green-950' },
+    red:     { header: 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800 hover:bg-red-100', text: 'text-red-800 dark:text-red-300', body: 'bg-red-50 dark:bg-red-950' },
+    orange:  { header: 'bg-orange-50 dark:bg-orange-950 border-orange-200 dark:border-orange-800 hover:bg-orange-100', text: 'text-orange-800 dark:text-orange-300', body: 'bg-orange-50 dark:bg-orange-950' },
+    indigo:  { header: 'bg-indigo-50 dark:bg-indigo-950 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100', text: 'text-indigo-800 dark:text-indigo-300', body: 'bg-indigo-50 dark:bg-indigo-950' },
+  }
+  const v = variants[variant]
+  return (
+    <div className={`border rounded-xl overflow-hidden ${v.header.split(' ')[1]}`}>
+      <button onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-left transition-colors ${v.header}`}>
+        <span className={v.text}>{title}</span>
+        <svg className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className={`px-4 pb-4 pt-3 ${v.body}`}>
+          <pre className="text-xs text-gray-700 dark:text-gray-200 whitespace-pre-wrap break-words font-mono bg-white/70 dark:bg-gray-800/70 rounded-lg p-3 border border-gray-100 dark:border-gray-800 max-h-80 overflow-y-auto">
+            {content}
+          </pre>
+        </div>
+      )}
     </div>
   )
 }

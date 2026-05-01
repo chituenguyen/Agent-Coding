@@ -1,7 +1,7 @@
 ---
 name: architect
 description: Analyze requirements, design system architecture, write SPEC.md
-# model: sonnet
+model: opus
 ---
 
 # Architect Agent

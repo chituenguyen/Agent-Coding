@@ -1,201 +1,189 @@
 import { useState, useEffect } from 'react'
-import { api } from '../api'
 
-// ─── heuristic engine (instant, no API) ─────────────────────────────────────
+const API_BASE = '/api'
 
-const ACTION_VERBS = [
-  'add', 'fix', 'update', 'create', 'build', 'implement', 'refactor', 'migrate',
-  'remove', 'delete', 'write', 'change', 'improve', 'optimize', 'debug', 'setup',
-  'configure', 'integrate', 'deploy', 'replace', 'extract', 'move', 'rename',
-  'connect', 'fetch', 'send', 'validate', 'handle', 'support', 'enable', 'disable',
-]
-
-const TECHNICAL_WORDS = [
-  'page', 'component', 'api', 'endpoint', 'service', 'modal', 'form', 'button',
-  'route', 'database', 'table', 'field', 'column', 'function', 'method', 'class',
-  'module', 'hook', 'store', 'query', 'mutation', 'event', 'handler', 'middleware',
-  'controller', 'model', 'schema', 'type', 'interface', 'test', 'migration',
-  'config', 'env', 'variable', 'param', 'header', 'request', 'response',
-  'error', 'exception', 'log', 'cache', 'queue', 'job', 'cron', 'webhook',
-  'auth', 'login', 'signup', 'user', 'role', 'permission', 'token', 'session',
-  'email', 'password', 'search', 'filter', 'sort', 'pagination', 'list', 'detail',
-  'layout', 'sidebar', 'navbar', 'menu', 'tab', 'dropdown', 'tooltip', 'alert',
-]
-
-function evaluate(text) {
-  const trimmed = text.trim()
-  const words = trimmed.split(/\s+/).filter(Boolean)
-  const lower = trimmed.toLowerCase()
-  const issues = []
-
-  if (words.length < 3) return null
-
-  if (words.length < 5) {
-    issues.push('Too short — describe what needs to be done and where')
-    return { level: 'weak', issues }
-  }
-
-  const hasVerb = ACTION_VERBS.some(v => lower.includes(v))
-  if (!hasVerb) issues.push('Missing action — start with: fix, add, build, refactor…')
-
-  const hasTechContext =
-    words.length > 8 ||
-    TECHNICAL_WORDS.some(w => lower.includes(w)) ||
-    /[A-Z][a-z]+[A-Z]/.test(trimmed) ||
-    /\.(jsx?|tsx?|go|py|ts|vue|css|json)/.test(lower) ||
-    /\//.test(trimmed)
-  if (!hasTechContext) issues.push('Add context — which page, component, API, or feature?')
-
-  if (/\b(it|this|that|they|them)\b/i.test(trimmed) && words.length < 10)
-    issues.push('Vague reference — replace "it / this / that" with the specific thing')
-
-  if (/^(fix|update|add|change|remove|delete|refactor|improve)\s+\w+\.?$/i.test(trimmed))
-    issues.push('Too generic — describe the specific behavior or problem')
-
-  const level = issues.length === 0 ? 'good' : issues.length === 1 ? 'okay' : 'weak'
-  return { level, issues }
-}
-
-// ─── component ───────────────────────────────────────────────────────────────
-
-const LEVELS = {
-  weak: { label: 'Weak prompt', color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800', dot: 'bg-red-500' },
-  okay: { label: 'Could be clearer', color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950 border-amber-200 dark:border-amber-800', dot: 'bg-amber-500' },
-  good: { label: 'Good prompt', color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800', dot: 'bg-green-500' },
-}
-
-export default function PromptEvaluator({ value, mode = 'task', onRewrite }) {
-  const [result, setResult] = useState(null)
-  // ai states: idle | loading | questions | rewritten | error
-  const [ai, setAi] = useState({ state: 'idle', data: null })
+// state: idle | streaming | questions | rewritten | error
+export default function PromptEvaluator({ value, targetRepo, mode = 'task', onRewrite }) {
+  const [state, setState] = useState('idle')
+  const [data, setData] = useState(null)
   const [answers, setAnswers] = useState({})
+  const [editedResult, setEditedResult] = useState('')
+  const [streamText, setStreamText] = useState('')
 
-  // Debounced heuristic
+  // Reset when prompt changes
   useEffect(() => {
-    const t = setTimeout(() => setResult(evaluate(value)), 300)
-    return () => clearTimeout(t)
-  }, [value])
-
-  // Reset AI state when user edits the prompt
-  useEffect(() => {
-    setAi({ state: 'idle', data: null })
+    setState('idle')
+    setData(null)
     setAnswers({})
+    setEditedResult('')
+    setStreamText('')
   }, [value])
 
-  async function handleImprove() {
-    setAi({ state: 'loading', data: null })
+  if (!value.trim()) return null
+
+  const hasRepo = targetRepo?.trim()
+
+  async function runEnhance(description) {
+    if (!targetRepo?.trim()) return
+    setState('streaming')
+    setStreamText('')
+
     try {
-      const res = await api.improvePrompt(value, mode)
-      if (res.action === 'rewrite') {
-        setAi({ state: 'rewritten', data: res })
-      } else {
-        setAi({ state: 'questions', data: res })
-        setAnswers({})
+      const response = await fetch(`${API_BASE}/improve-prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, mode, targetRepo }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Request failed' }))
+        setData(err); setState('error'); return
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value: chunk } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(chunk, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() // keep incomplete trailing line
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            if (event.chunk) {
+              setStreamText(t => t + event.chunk)
+            } else if (event.done) {
+              const result = event.result
+              setData(result)
+              if (result.action === 'rewrite') {
+                setEditedResult(result.result)
+                setState('rewritten')
+              } else {
+                setState('questions')
+              }
+            } else if (event.error) {
+              setData({ error: event.error })
+              setState('error')
+            }
+          } catch { /* skip malformed line */ }
+        }
       }
     } catch (e) {
-      setAi({ state: 'error', data: { error: e.message } })
+      setData({ error: e.message })
+      setState('error')
     }
   }
 
-  async function handleAnswersSubmit() {
-    const combined = value.trim() + '\n\nAdditional context:\n' +
-      ai.data.result.map((q, i) => `- ${q}\n  → ${answers[i] || '(no answer)'}`).join('\n')
-    setAi({ state: 'loading', data: null })
-    try {
-      const res = await api.improvePrompt(combined, mode)
-      setAi({ state: 'rewritten', data: res })
-    } catch (e) {
-      setAi({ state: 'error', data: { error: e.message } })
-    }
+  function handleEnhance() {
+    runEnhance(value)
+  }
+
+  function handleSubmitAnswers() {
+    const combined =
+      value.trim() +
+      '\n\nAdditional context:\n' +
+      data.result.map((q, i) => `- ${q}\n  → ${answers[i] || ''}`).join('\n')
+    runEnhance(combined)
   }
 
   function handleAccept() {
-    onRewrite?.(ai.data.result)
-    setAi({ state: 'idle', data: null })
+    onRewrite?.(editedResult)
+    setState('idle')
+    setData(null)
+    setEditedResult('')
   }
 
-  if (!result && ai.state === 'idle') return null
-
-  const lvl = result ? LEVELS[result.level] : null
+  function handleDismiss() {
+    setState('idle')
+    setData(null)
+    setEditedResult('')
+  }
 
   return (
     <div className="space-y-2">
-      {/* Heuristic badge + improve button */}
-      {result && (
-        <div className={`rounded-lg border px-3 py-2.5 ${lvl.bg}`}>
-          <div className="flex items-center justify-between gap-2">
-            <div className={`flex items-center gap-1.5 text-xs font-semibold ${lvl.color}`}>
-              <span className={`w-2 h-2 rounded-full shrink-0 ${lvl.dot}`} />
-              {lvl.label}
-            </div>
-            {result.level !== 'good' && ai.state === 'idle' && (
-              <button
-                onClick={handleImprove}
-                className="flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                </svg>
-                Improve with AI
-              </button>
-            )}
+      {/* Enhance button or repo-required hint */}
+      {state === 'idle' && (
+        hasRepo ? (
+          <button
+            type="button"
+            onClick={handleEnhance}
+            className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            Enhance with AI
+          </button>
+        ) : (
+          <p className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            Select a target repository to enable <span className="font-medium text-gray-500 dark:text-gray-400">Enhance with AI</span>
+          </p>
+        )
+      )}
+
+      {/* Streaming — live output from Claude */}
+      {state === 'streaming' && (
+        <div className="border border-indigo-200 dark:border-indigo-800 rounded-lg overflow-hidden">
+          <div className="px-3 py-2 bg-indigo-50 dark:bg-indigo-950 border-b border-indigo-100 dark:border-indigo-900 flex items-center gap-2">
+            <svg className="w-3 h-3 text-indigo-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+            <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">Exploring codebase…</span>
           </div>
-          {result.issues.length > 0 && (
-            <ul className="mt-1.5 space-y-0.5">
-              {result.issues.map((issue, i) => (
-                <li key={i} className={`text-xs ${lvl.color}`}>· {issue}</li>
-              ))}
-            </ul>
-          )}
+          <div className="px-3 py-2.5 bg-white dark:bg-gray-900 max-h-48 overflow-y-auto">
+            <pre className="text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap font-mono leading-relaxed">
+              {streamText}<span className="animate-pulse text-indigo-400">▋</span>
+            </pre>
+          </div>
         </div>
       )}
 
-      {/* AI loading */}
-      {ai.state === 'loading' && (
-        <div className="flex items-center gap-2 px-3 py-2.5 bg-indigo-50 dark:bg-indigo-950 border border-indigo-200 dark:border-indigo-800 rounded-lg">
-          <svg className="w-3.5 h-3.5 text-indigo-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-          </svg>
-          <span className="text-xs text-indigo-600 dark:text-indigo-400">Claude is analyzing your prompt…</span>
-        </div>
-      )}
-
-      {/* AI questions */}
-      {ai.state === 'questions' && (
+      {/* Claude needs more info */}
+      {state === 'questions' && (
         <div className="border border-indigo-200 dark:border-indigo-800 rounded-lg overflow-hidden">
           <div className="px-3 py-2 bg-indigo-50 dark:bg-indigo-950 border-b border-indigo-100 dark:border-indigo-900">
             <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
-              Claude needs a bit more info
+              A few quick questions to sharpen the prompt
             </p>
-            {ai.data.explanation && (
-              <p className="text-xs text-indigo-500 dark:text-indigo-400 mt-0.5">{ai.data.explanation}</p>
+            {data.explanation && (
+              <p className="text-xs text-indigo-500 dark:text-indigo-400 mt-0.5">{data.explanation}</p>
             )}
           </div>
           <div className="px-3 py-3 space-y-3 bg-white dark:bg-gray-900">
-            {ai.data.result.map((q, i) => (
+            {data.result.map((q, i) => (
               <div key={i}>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-200 mb-1">{q}</label>
                 <input
                   type="text"
                   value={answers[i] || ''}
                   onChange={e => setAnswers(a => ({ ...a, [i]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSubmitAnswers() }}
                   placeholder="Your answer…"
                   className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                  autoFocus={i === 0}
                 />
               </div>
             ))}
-            <div className="flex items-center gap-2 pt-1">
+            <div className="flex items-center gap-3 pt-1">
               <button
-                onClick={handleAnswersSubmit}
-                disabled={Object.keys(answers).length === 0}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+                onClick={handleSubmitAnswers}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-lg transition-colors"
               >
                 Rewrite prompt →
               </button>
-              <button onClick={() => setAi({ state: 'idle', data: null })}
-                className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+              <button onClick={handleDismiss} className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
                 Cancel
               </button>
             </div>
@@ -203,41 +191,57 @@ export default function PromptEvaluator({ value, mode = 'task', onRewrite }) {
         </div>
       )}
 
-      {/* AI rewrite result */}
-      {ai.state === 'rewritten' && (
+      {/* Rewrite result */}
+      {state === 'rewritten' && (
         <div className="border border-green-200 dark:border-green-800 rounded-lg overflow-hidden">
-          <div className="px-3 py-2 bg-green-50 dark:bg-green-950 border-b border-green-100 dark:border-green-900 flex items-center justify-between">
-            <p className="text-xs font-semibold text-green-700 dark:text-green-300">
-              Suggested rewrite
-            </p>
-            {ai.data.explanation && (
-              <span className="text-xs text-green-600 dark:text-green-400">{ai.data.explanation}</span>
-            )}
-          </div>
-          <div className="px-3 py-3 bg-white dark:bg-gray-900">
-            <p className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed">{ai.data.result}</p>
-            <div className="flex items-center gap-2 mt-3">
-              <button
-                onClick={handleAccept}
-                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors"
-              >
-                Use this →
-              </button>
-              <button onClick={() => setAi({ state: 'idle', data: null })}
-                className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-                Keep mine
-              </button>
+          {/* Header */}
+          <div className="px-3 py-2 bg-green-50 dark:bg-green-950 border-b border-green-100 dark:border-green-900 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-green-700 dark:text-green-300">Suggested rewrite</p>
+              {data.explanation && (
+                <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">{data.explanation}</p>
+              )}
             </div>
+            <span className="text-xs text-green-500 dark:text-green-500 shrink-0 mt-0.5">You can edit before using</span>
+          </div>
+          {/* Editable result */}
+          <div className="bg-white dark:bg-gray-900 px-3 pt-3 pb-2">
+            <textarea
+              rows={6}
+              value={editedResult}
+              onChange={e => setEditedResult(e.target.value)}
+              className="w-full text-sm text-gray-700 dark:text-gray-200 leading-relaxed bg-transparent border-0 outline-none resize-y p-0"
+            />
+          </div>
+          {/* Actions */}
+          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-t border-green-100 dark:border-green-900 flex items-center gap-3">
+            <button
+              onClick={handleAccept}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Use this
+            </button>
+            <button
+              onClick={handleEnhance}
+              className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+            >
+              Re-enhance
+            </button>
+            <button onClick={handleDismiss} className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ml-auto">
+              Discard
+            </button>
           </div>
         </div>
       )}
 
-      {/* AI error */}
-      {ai.state === 'error' && (
-        <div className="px-3 py-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg flex items-center justify-between">
-          <span className="text-xs text-red-600 dark:text-red-400">{ai.data.error}</span>
-          <button onClick={() => setAi({ state: 'idle', data: null })}
-            className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600">Dismiss</button>
+      {/* Error */}
+      {state === 'error' && (
+        <div className="flex items-center justify-between px-3 py-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg">
+          <span className="text-xs text-red-600 dark:text-red-400">{data?.error || 'Something went wrong'}</span>
+          <button onClick={handleDismiss} className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 ml-3 transition-colors">Dismiss</button>
         </div>
       )}
     </div>

@@ -2,14 +2,16 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g
 
-// taskPath → runs /workflow
-// command  → runs any arbitrary claude command string
-export default function Terminal({ taskPath, command, autoStart = false, onDone }) {
+// taskPath → runs /workflow (persistent, survives navigation)
+// command  → runs any arbitrary claude command string (ephemeral)
+export default function Terminal({ taskPath, command, autoStart = false, onDone, onRunningChange, readOnly = false }) {
   const [lines, setLines] = useState([])
   const [running, setRunning] = useState(false)
   const [exitCode, setExitCode] = useState(null)
+  const [reconnected, setReconnected] = useState(false) // true = showing replayed output
   const wsRef = useRef(null)
   const bottomRef = useRef(null)
+  const retryRef = useRef(0)
 
   const addLine = (text, isErr = false) => {
     const clean = text.replace(ANSI_RE, '')
@@ -17,32 +19,44 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone 
     setLines(prev => [...prev, { text: clean, isErr }])
   }
 
-  const start = useCallback(() => {
-    if (running || wsRef.current) return
+  // Connect WebSocket for live streaming (new workflow or live updates after reconnect)
+  const connectLive = useCallback((action, payload) => {
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${protocol}://${window.location.host}/ws`)
     wsRef.current = ws
 
     ws.onopen = () => {
-      if (taskPath) {
-        ws.send(JSON.stringify({ action: 'run-workflow', taskPath }))
-      } else if (command) {
-        ws.send(JSON.stringify({ action: 'run-command', command }))
-      }
+      retryRef.current = 0
+      console.log('[Terminal] WS connected, action:', action)
+      ws.send(JSON.stringify({ action, ...payload }))
       setRunning(true)
       setExitCode(null)
-      setLines([])
+      if (action === 'run-workflow' || action === 'run-command') {
+        setLines([])
+        setReconnected(false)
+      }
+      // For subscribe: don't clear lines — we already loaded history via REST
     }
 
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data)
       if (msg.type === 'started') {
-        addLine(`▶ ${msg.taskPath ? `Running workflow: ${msg.taskPath}` : `Running: ${msg.command}`}\n`)
+        if (action === 'run-workflow' || action === 'run-command') {
+          addLine(`▶ ${msg.taskPath ? `Running workflow: ${msg.taskPath}` : `Running: ${msg.command}`}\n`)
+        }
+        // For subscribe: skip — history already loaded
       } else if (msg.type === 'stdout') {
-        addLine(msg.data, false)
+        // For subscribe: skip replayed lines (already loaded via REST)
+        // Only add truly new lines that arrive AFTER the subscribe handshake
+        if (action !== 'subscribe') {
+          addLine(msg.data, false)
+        }
       } else if (msg.type === 'stderr') {
-        addLine(msg.data, true)
+        if (action !== 'subscribe') {
+          addLine(msg.data, true)
+        }
       } else if (msg.type === 'done') {
         setRunning(false)
         setExitCode(msg.code)
@@ -57,20 +71,84 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone 
         setRunning(false)
         addLine(`Error: ${msg.message}`, true)
         wsRef.current = null
+      } else if (msg.type === 'not-found') {
+        setRunning(false)
+        wsRef.current = null
+      }
+    }
+
+    // After subscribe replay is done, switch to forwarding new messages
+    // The server sends all buffered output, then continues with live output
+    // We need to detect when replay ends and live starts
+    // Strategy: after first batch of messages, flip to live mode
+    if (action === 'subscribe') {
+      let replayDone = false
+      let skipped = 0
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data)
+        if (!replayDone && (msg.type === 'stdout' || msg.type === 'stderr')) {
+          skipped++
+          return
+        }
+        if (msg.type === 'started') {
+          console.log('[Terminal] Subscribe: skipping replay, waiting for live data...')
+          setTimeout(() => {
+            replayDone = true
+            console.log('[Terminal] Subscribe: replay done, skipped', skipped, 'msgs. Now live.')
+          }, 500)
+          return
+        }
+        // Everything else (done, error, stopped) or post-replay live data
+        replayDone = true
+        // Re-assign to normal handler for all future messages
+        ws.onmessage = (e2) => {
+          const m = JSON.parse(e2.data)
+          if (m.type === 'stdout') addLine(m.data, false)
+          else if (m.type === 'stderr') addLine(m.data, true)
+          else if (m.type === 'done') {
+            setRunning(false)
+            setExitCode(m.code)
+            addLine(`\n● Process exited with code ${m.code}`, m.code !== 0)
+            wsRef.current = null
+            onDone?.()
+          } else if (m.type === 'stopped') {
+            setRunning(false)
+            addLine('\n■ Stopped by user', true)
+            wsRef.current = null
+          } else if (m.type === 'error') {
+            setRunning(false)
+            addLine(`Error: ${m.message}`, true)
+            wsRef.current = null
+          }
+        }
+        // Also handle this current message
+        ws.onmessage(e)
       }
     }
 
     ws.onerror = () => {
-      setRunning(false)
-      addLine('WebSocket error. Is the server running?', true)
       wsRef.current = null
+      if (action === 'subscribe' && retryRef.current < 3) {
+        retryRef.current++
+        setTimeout(() => connectLive(action, payload), 2000)
+      } else {
+        setRunning(false)
+        addLine('WebSocket error. Is the server running?', true)
+      }
     }
 
     ws.onclose = () => {
-      setRunning(false)
       wsRef.current = null
     }
-  }, [taskPath, running, onDone])
+  }, [onDone])
+
+  const start = useCallback(() => {
+    if (taskPath) {
+      connectLive('run-workflow', { taskPath })
+    } else if (command) {
+      connectLive('run-command', { command })
+    }
+  }, [taskPath, command, connectLive])
 
   const stop = useCallback(() => {
     if (wsRef.current) {
@@ -81,19 +159,74 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone 
   const clear = useCallback(() => {
     setLines([])
     setExitCode(null)
+    setReconnected(false)
   }, [])
 
-  // Auto-start on mount if requested
+  // On mount: check if a workflow is already running or finished
   useEffect(() => {
-    if (autoStart) start()
+    if (!taskPath) return
+
+    async function checkRunning() {
+      console.log('[Terminal] checkRunning for', taskPath)
+      try {
+        const res = await fetch(`/api/workflows/${encodeURIComponent(taskPath)}`)
+        const data = await res.json()
+        console.log('[Terminal] REST response:', { running: data.running, lines: data.output?.length, exitCode: data.exitCode })
+        if (data.running) {
+          // Load history from REST (instant, no jitter)
+          const historyLines = (data.output || []).map(l => ({
+            text: l.text.replace(ANSI_RE, ''),
+            isErr: l.isErr,
+          })).filter(l => l.text)
+          console.log('[Terminal] Loading', historyLines.length, 'history lines, subscribing for live')
+          setLines(historyLines)
+          setReconnected(true)
+          setRunning(true)
+          // Then subscribe for live updates only
+          connectLive('subscribe', { taskPath })
+        } else if (data.output && data.output.length > 0) {
+          // Finished while away — show buffered output
+          const historyLines = (data.output || []).map(l => ({
+            text: l.text.replace(ANSI_RE, ''),
+            isErr: l.isErr,
+          })).filter(l => l.text)
+          console.log('[Terminal] Finished workflow, showing', historyLines.length, 'history lines')
+          setLines(historyLines)
+          setReconnected(true)
+          setExitCode(data.exitCode)
+        } else {
+          console.log('[Terminal] No running workflow found')
+          if (autoStart) start()
+        }
+      } catch (e) {
+        console.log('[Terminal] checkRunning error:', e.message)
+        if (autoStart) start()
+      }
+    }
+
+    checkRunning()
+  }, [taskPath]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-start for non-workflow commands
+  useEffect(() => {
+    if (autoStart && command && !taskPath) start()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent of running state changes
+  useEffect(() => { onRunningChange?.(running) }, [running])
 
   // Auto-scroll to bottom on new output
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!reconnected) {
+      // Live output — smooth scroll
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    } else {
+      // Replayed output — instant scroll, no animation
+      bottomRef.current?.scrollIntoView()
+    }
   }, [lines])
 
-  // Kill WS on unmount
+  // Disconnect WS on unmount (but don't kill the server process)
   useEffect(() => {
     return () => {
       if (wsRef.current) {
@@ -139,7 +272,7 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone 
               </svg>
               Stop
             </button>
-          ) : (
+          ) : !readOnly ? (
             <button
               onClick={start}
               className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-md font-medium transition-colors flex items-center gap-1.5"
@@ -149,7 +282,7 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone 
               </svg>
               Run Workflow
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -157,19 +290,26 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone 
       <div className="overflow-y-auto p-4 min-h-48 max-h-[500px] font-mono text-xs">
         {lines.length === 0 ? (
           <div className="text-gray-600 select-none">
-            Click <span className="text-indigo-400">Run Workflow</span> to start the multi-agent pipeline...
+            {readOnly ? 'No workflow output.' : <>Click <span className="text-indigo-400">Run Workflow</span> to start the multi-agent pipeline...</>}
           </div>
         ) : (
-          lines.map((line, i) => (
-            <pre
-              key={i}
-              className={`whitespace-pre-wrap break-words leading-relaxed ${
-                line.isErr ? 'text-red-400' : 'text-green-300'
-              }`}
-            >
-              {line.text}
-            </pre>
-          ))
+          <>
+            {reconnected && (
+              <div className="text-gray-600 text-center text-xs mb-3 pb-2 border-b border-gray-800">
+                ── Previous output ──
+              </div>
+            )}
+            {lines.map((line, i) => (
+              <pre
+                key={i}
+                className={`whitespace-pre-wrap break-words leading-relaxed ${
+                  line.isErr ? 'text-red-400' : 'text-green-300'
+                }`}
+              >
+                {line.text}
+              </pre>
+            ))}
+          </>
         )}
         <div ref={bottomRef} />
       </div>

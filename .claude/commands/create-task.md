@@ -8,6 +8,7 @@ Initialize a new task directory for the multi-agent workflow.
 
 ```
 /create-task "Task description" --target /path/to/repo
+/create-task "Task description" --target /path/to/repo --ticket PROJ-123
 /create-task "Task description"
 ```
 
@@ -18,11 +19,12 @@ Initialize a new task directory for the multi-agent workflow.
 Extract from command args:
 - **description** — the task description text
 - **--target / -t** — optional path to target repository
+- **--ticket** — optional ticket ID (e.g. `PROJ-123`, `#456`, `sprint-1-auth`)
 
 ### 2. Derive identifiers
 
 - **project name**: if `--target` provided, slugify the repo folder name (lowercase, replace spaces/special chars with `-`). If no target, use `"workspace"`.
-- **task ID**: `YYYYMMDD-HHMMSS-slugified-description` (slug max 50 chars)
+- **task ID**: if `--ticket` provided, use `YYYYMMDD-HHMMSS-[ticket]` (slugified). Otherwise, use `YYYYMMDD-HHMMSS-slugified-description` (slug max 50 chars).
 - **task dir**: `tasks/[project]/[task-id]/`
 
 ### 3. Create directories
@@ -112,6 +114,10 @@ Write to `tasks/[project]/[task-id]/target-info.md`:
 
 ```
 /create-task "Build login page" --target ~/projects/my-app
+/create-task "Build login page" --target ~/projects/my-app --ticket PROJ-123
 /create-task "Fix payment bug" -t /Users/me/projects/payments
 /create-task "Refactor auth module"
 ```
+
+With `--ticket PROJ-123`, the task folder becomes:
+`tasks/my-app/20260428-143000-PROJ-123/` instead of `tasks/my-app/20260428-143000-build-login-page/`

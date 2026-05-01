@@ -1,3 +1,57 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Prevent Brave/browser dark mode from forcing styles on pre/code/textarea */
+*, *::before, *::after {
+  forced-color-adjust: none;
+}
+
+pre, code, textarea, input, select {
+  color-scheme: normal;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.3);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.5);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.4);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(75, 85, 99, 0.6);
+}
+
+/* Hide scrollbar until hover */
+textarea::-webkit-scrollbar-thumb,
+pre::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+textarea:hover::-webkit-scrollbar-thumb,
+pre:hover::-webkit-scrollbar-thumb,
+textarea:focus::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.3);
+}
+
+.dark textarea:hover::-webkit-scrollbar-thumb,
+.dark pre:hover::-webkit-scrollbar-thumb,
+.dark textarea:focus::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.4);
+}

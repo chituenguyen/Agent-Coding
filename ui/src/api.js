@@ -17,13 +17,31 @@ export const api = {
   // Queue
   getQueue: () => req('GET', '/queue'),
   addToQueue: (data) => req('POST', '/queue/add', data),
+  addFixToQueue: (project, taskId, fixId, fixPath, description) =>
+    req('POST', '/queue/add', { description, type: 'fix', task_path: `tasks/${project}/${taskId}`, fix_path: fixPath }),
+  addSubtaskToQueue: (project, taskId, subtaskId, subtaskPath, description) =>
+    req('POST', '/queue/add', { description, type: 'subtask', task_path: `tasks/${project}/${taskId}`, subtask_path: subtaskPath }),
   clearQueue: (filter = 'done') => req('DELETE', `/queue/clear?filter=${filter}`),
+  reorderQueue: (fromIndex, toIndex) => req('POST', '/queue/reorder', { fromIndex, toIndex }),
+  retryQueue: (index) => req('POST', '/queue/retry', { index }),
+  cancelQueue: () => req('POST', '/queue/cancel'),
+  removeQueue: (index) => req('DELETE', '/queue/remove', { index }),
 
   // Tasks
   getTasks: () => req('GET', '/tasks'),
   getTask: (project, taskId) => req('GET', `/tasks/${project}/${taskId}`),
   createTask: (data) => req('POST', '/tasks', data),
   deleteTask: (project, taskId) => req('DELETE', `/tasks/${project}/${taskId}`),
+  // Fixes (bug fixes on completed tasks)
+  createFix: (project, taskId, data) => req('POST', `/tasks/${project}/${taskId}/fixes`, data),
+  getFixes: (project, taskId) => req('GET', `/tasks/${project}/${taskId}/fixes`),
+  // Sub-tasks (related tasks on completed tasks)
+  createSubtask: (project, taskId, data) => req('POST', `/tasks/${project}/${taskId}/subtasks`, data),
+  getSubtasks: (project, taskId) => req('GET', `/tasks/${project}/${taskId}/subtasks`),
+  deleteFix: (project, taskId, fixId) => req('DELETE', `/tasks/${project}/${taskId}/fixes/${fixId}`),
+  deleteSubtask: (project, taskId, subtaskId) => req('DELETE', `/tasks/${project}/${taskId}/subtasks/${subtaskId}`),
+  resetFix: (project, taskId, fixId) => req('POST', `/tasks/${project}/${taskId}/fixes/${fixId}/reset`),
+  resetSubtask: (project, taskId, subtaskId) => req('POST', `/tasks/${project}/${taskId}/subtasks/${subtaskId}/reset`),
 
   // Settings
   getSettings: () => req('GET', '/settings'),
@@ -52,6 +70,21 @@ export const api = {
   updateCommand: (filename, data) => req('PUT', `/commands/${filename}`, data),
   deleteCommand: (filename) => req('DELETE', `/commands/${filename}`),
 
-  // Prompt improvement
-  improvePrompt: (description, mode) => req('POST', '/improve-prompt', { description, mode }),
+  // MCP Catalog
+  getCatalog: () => req('GET', '/catalog'),
+  upsertCatalog: (item) => req('POST', '/catalog', item),
+  deleteCatalog: (name) => req('DELETE', `/catalog/${encodeURIComponent(name)}`),
+
+  // Repositories (per-project MCP)
+  getRepositories: () => req('GET', '/repositories'),
+  createRepository: (data) => req('POST', '/repositories', data),
+  deleteRepository: (name) => req('DELETE', `/repositories/${encodeURIComponent(name)}`),
+  getRepoMcp: (project) => req('GET', `/repositories/${project}/mcp`),
+  upsertRepoMcp: (project, name, config) => req('PUT', `/repositories/${project}/mcp/${encodeURIComponent(name)}`, config),
+  deleteRepoMcp: (project, name) => req('DELETE', `/repositories/${project}/mcp/${encodeURIComponent(name)}`),
+  getRepoGraph: (project) => req('GET', `/repositories/${project}/graph`),
+  indexRepoGraph: (project) => req('POST', `/repositories/${project}/graph/index`),
+
+  // Native folder picker
+  browseFolder: (prompt) => req('POST', '/browse-folder', { prompt }),
 }

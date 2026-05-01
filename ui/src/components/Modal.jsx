@@ -1,14 +1,15 @@
 import { useEffect } from 'react'
 
-export default function Modal({ title, onClose, children, footer, wide }) {
+export default function Modal({ title, onClose, children, footer, wide, visible = true }) {
   useEffect(() => {
+    if (!visible) return
     const handler = (e) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
+  }, [onClose, visible])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={visible ? undefined : { display: 'none' }}>
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className={`relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl flex flex-col max-h-[90vh] w-full ${wide ? 'max-w-2xl' : 'max-w-lg'}`}>
         {/* Header */}

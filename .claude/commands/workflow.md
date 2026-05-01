@@ -51,14 +51,15 @@ User -> Orchestrator (main session)
 ### When receiving `/workflow [task-id]`:
 
 1. **Read task context** from `tasks/[task-id]/`
-2. **Spawn Architect + Researcher** in parallel with Agent() tool
-3. **Wait for both** to finish -> read SPEC.md and research notes
-4. **Spawn Coder** with Agent() tool
-5. **Wait for Coder** -> read code summary
-6. **Spawn Reviewer** with Agent() tool
-7. **Wait for Reviewer** -> read approval/issues
-8. **If issues** -> spawn Debugger -> re-spawn Reviewer (loop max 3x)
-9. **Report result** to user
+2. **Check for MCP tools** in `input.md` → if "Available MCP Tools" section exists, inform all agents that they have these tools and SHOULD use them (e.g. GitNexus for querying code graph, checking blast radius before changes)
+3. **Spawn Architect + Researcher** in parallel with Agent() tool
+4. **Wait for both** to finish -> read SPEC.md and research notes
+5. **Spawn Coder** with Agent() tool — include MCP tools instruction in the prompt: "You have access to MCP tools: [list]. Use them to explore the codebase structure before writing code."
+6. **Wait for Coder** -> read code summary
+7. **Spawn Reviewer** with Agent() tool — include: "You have access to MCP tools: [list]. Use them to check impact and verify code relationships."
+8. **Wait for Reviewer** -> read approval/issues
+9. **If issues** -> spawn Debugger -> re-spawn Reviewer (loop max 3x)
+10. **Report result** to user
 
 ### Spawning Pattern:
 

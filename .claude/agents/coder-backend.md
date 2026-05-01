@@ -1,7 +1,7 @@
 ---
 name: coder-backend
 description: Implement backend code (API, database, business logic, services) according to SPEC.md backend section
-# model: sonnet
+model: haiku
 ---
 
 # Coder Backend Agent

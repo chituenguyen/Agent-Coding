@@ -1,7 +1,7 @@
 ---
 name: investigator
 description: Interactive bug investigator. User describes a bug, agent traces root cause through the codebase.
-# model: sonnet
+model: sonnet
 ---
 
 # Investigator Agent

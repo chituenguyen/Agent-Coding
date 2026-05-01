@@ -47,6 +47,7 @@ export default function TaskDetail() {
   const { project, taskId } = useParams()
   const [task, setTask] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [workflowRunning, setWorkflowRunning] = useState(false)
   const navigate = useNavigate()
 
   async function load() {
@@ -60,7 +61,21 @@ export default function TaskDetail() {
     }
   }
 
+  // Silently refresh task data (status, files) without loading spinner
+  async function refresh() {
+    try {
+      setTask(await api.getTask(project, taskId))
+    } catch { /* ignore */ }
+  }
+
   useEffect(() => { load() }, [project, taskId])
+
+  // Poll task status every 5s while workflow is running
+  useEffect(() => {
+    if (!workflowRunning) return
+    const interval = setInterval(refresh, 5000)
+    return () => clearInterval(interval)
+  }, [workflowRunning])
 
   const { state: queueState, addToQueue } = useAddToQueue()
 
@@ -80,6 +95,8 @@ export default function TaskDetail() {
 
   const stepIndex = STATUS_TO_STEP[task.status] ?? 0
   const hasIssues = task.status === 'issues'
+  // When workflow is running, the NEXT step after current is "in progress"
+  const inProgressStep = workflowRunning && stepIndex < STEPS.length - 1 ? stepIndex + 1 : -1
 
   return (
     <div className="p-8 max-w-4xl">
@@ -95,10 +112,9 @@ export default function TaskDetail() {
       </button>
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-snug">{task.description}</h1>
-          <div className="flex items-center gap-3 mt-1.5">
+      <div className="mb-6">
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
             <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{task.taskId}</span>
             <span className="text-gray-300 dark:text-gray-600">·</span>
             <span className="text-xs text-gray-400 dark:text-gray-500">{task.project}</span>
@@ -109,11 +125,12 @@ export default function TaskDetail() {
               </>
             )}
           </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <StatusBadge status={task.status} />
+            <AddToQueueBtn state={queueState} onClick={() => addToQueue(task)} />
+          </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <StatusBadge status={task.status} />
-          <AddToQueueBtn state={queueState} onClick={() => addToQueue(task)} />
-        </div>
+        <DescriptionCard description={task.description} />
       </div>
 
       {/* Progress steps */}
@@ -128,26 +145,41 @@ export default function TaskDetail() {
                     : i === stepIndex
                     ? hasIssues
                       ? 'bg-red-500 border-red-500 text-white'
-                      : 'bg-indigo-600 border-indigo-600 text-white ring-4 ring-indigo-100'
+                      : 'bg-indigo-600 border-indigo-600 text-white ring-4 ring-indigo-100 dark:ring-indigo-900'
+                    : i === inProgressStep
+                    ? 'bg-yellow-400 border-yellow-400 text-yellow-900 ring-4 ring-yellow-100 dark:ring-yellow-900 animate-pulse'
                     : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-300 dark:text-gray-600'
                 }`}>
                   {i < stepIndex ? (
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                     </svg>
+                  ) : i === inProgressStep ? (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                    </svg>
                   ) : (
                     <span>{i + 1}</span>
                   )}
                 </div>
                 <span className={`text-xs mt-1.5 whitespace-nowrap font-medium ${
-                  i <= stepIndex ? 'text-gray-700 dark:text-gray-200' : 'text-gray-300 dark:text-gray-600'
+                  i <= stepIndex
+                    ? 'text-gray-700 dark:text-gray-200'
+                    : i === inProgressStep
+                    ? 'text-yellow-600 dark:text-yellow-400'
+                    : 'text-gray-300 dark:text-gray-600'
                 }`}>
-                  {step.label}
+                  {i === inProgressStep ? `${step.label}...` : step.label}
                 </span>
               </div>
               {i < STEPS.length - 1 && (
                 <div className={`flex-1 h-0.5 mx-2 mb-5 transition-all ${
-                  i < stepIndex ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-700'
+                  i < stepIndex
+                    ? 'bg-indigo-600'
+                    : i === stepIndex && inProgressStep > stepIndex
+                    ? 'bg-yellow-300 dark:bg-yellow-700 animate-pulse'
+                    : 'bg-gray-200 dark:bg-gray-700'
                 }`} />
               )}
             </div>
@@ -164,20 +196,23 @@ export default function TaskDetail() {
         )}
       </div>
 
-      {/* Workflow terminal */}
-      <div className="mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
-          <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-          Workflow Runner
-        </h2>
-        <Terminal
-          taskPath={`tasks/${project}/${taskId}`}
-          onDone={load}
-        />
-      </div>
+      {/* Workflow terminal — hidden when done */}
+      {task.status !== 'done' && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+            <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Workflow Runner
+          </h2>
+          <Terminal
+            taskPath={`tasks/${project}/${taskId}`}
+            onDone={() => { setWorkflowRunning(false); load() }}
+            onRunningChange={setWorkflowRunning}
+          />
+        </div>
+      )}
 
       {/* Output files */}
       {(task.files.spec || task.files.approval || task.files.issues || task.files.commit ||
@@ -290,6 +325,45 @@ function FileCard({ title, content, variant = 'default', defaultOpen = false }) 
           </pre>
         </div>
       )}
+    </div>
+  )
+}
+
+function DescriptionCard({ description }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = description.length > 200
+
+  return (
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+      <div className="px-4 py-3">
+        {isLong && !expanded ? (
+          <>
+            <p className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed whitespace-pre-wrap">
+              {description.slice(0, 200).trim()}...
+            </p>
+            <button
+              onClick={() => setExpanded(true)}
+              className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium transition-colors"
+            >
+              Show full description ({description.length} chars)
+            </button>
+          </>
+        ) : (
+          <>
+            <pre className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed whitespace-pre-wrap break-words font-sans max-h-80 overflow-y-auto">
+              {description}
+            </pre>
+            {isLong && (
+              <button
+                onClick={() => setExpanded(false)}
+                className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-medium transition-colors"
+              >
+                Show less
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }

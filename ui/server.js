@@ -142,9 +142,235 @@ app.delete('/api/tasks/:project/:taskId', async (req, res) => {
   }
 })
 
+// ─── subtasks (related tasks on completed tasks) ─────────────────────────────
+
+app.post('/api/tasks/:project/:taskId/subtasks', async (req, res) => {
+  try {
+    const { project, taskId } = req.params
+    const { description } = req.body
+    if (!description?.trim()) return res.status(400).json({ error: 'description required' })
+
+    const taskDir = path.join(WORKSPACE, 'tasks', project, taskId)
+    if (!existsSync(taskDir)) return res.status(404).json({ error: 'Task not found' })
+
+    const now = new Date()
+    const pad = (n, l = 2) => String(n).padStart(l, '0')
+    const dateStr = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`
+    const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+    const slug = description.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
+    const subtaskId = `${dateStr}-${timeStr}-${slug}`
+    const subtaskDir = path.join(taskDir, 'subtasks', subtaskId)
+
+    await mkdir(path.join(subtaskDir, 'review'), { recursive: true })
+    await mkdir(path.join(subtaskDir, 'research'), { recursive: true })
+    await writeFile(path.join(subtaskDir, 'input.md'), `# Sub-task Input\n\n**Parent Task:** ${taskId}\n**Project:** ${project}\n**Created:** ${now.toISOString()}\n**Description:** ${description.trim()}\n\n## User's Request\n\n${description.trim()}\n`)
+
+    res.json({ subtaskId, subtaskPath: `tasks/${project}/${taskId}/subtasks/${subtaskId}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/tasks/:project/:taskId/subtasks', async (req, res) => {
+  try {
+    const { project, taskId } = req.params
+    const subtasksDir = path.join(WORKSPACE, 'tasks', project, taskId, 'subtasks')
+    if (!existsSync(subtasksDir)) return res.json([])
+
+    const queue = await readQueue()
+    const dirs = await readdir(subtasksDir)
+    const subtasks = []
+    for (const subtaskId of dirs) {
+      const subtaskDir = path.join(subtasksDir, subtaskId)
+      const s = await stat(subtaskDir)
+      if (!s.isDirectory()) continue
+      const inputMd = await readIfExists(path.join(subtaskDir, 'input.md'))
+      const commitMd = await readIfExists(path.join(subtaskDir, 'commit.md'))
+      const approvalMd = await readIfExists(path.join(subtaskDir, 'review', 'approval.md'))
+      const issuesMd = await readIfExists(path.join(subtaskDir, 'review', 'issues.md'))
+      const subtaskPath = `tasks/${project}/${taskId}/subtasks/${subtaskId}`
+      // cross-ref running processes + queue for live status
+      const wf = runningWorkflows.get(subtaskPath)
+      const isProcessRunning = wf && wf.exitCode === null
+      const qItem = queue.tasks.find(t => t.type === 'subtask' && t.subtask_path === subtaskPath)
+      let status
+      if (isProcessRunning) status = 'running'
+      else if (qItem?.status === 'running') status = 'running'
+      else if (qItem?.status === 'pending') status = 'queued'
+      else if (qItem?.status === 'failed') status = 'failed'
+      else if (commitMd) status = 'done'
+      else if (approvalMd) status = 'approved'
+      else if (issuesMd) status = 'issues'
+      else if (existsSync(path.join(subtaskDir, 'SPEC.md'))) status = 'planned'
+      else status = 'created'
+      // For running items, derive the sub-step from filesystem
+      const subStep = isProcessRunning ? (
+        approvalMd ? 'approved' : issuesMd ? 'issues'
+        : (existsSync(path.join(subtaskDir, 'review', 'backend-summary.md')) || existsSync(path.join(subtaskDir, 'review', 'frontend-summary.md'))) ? 'coded'
+        : existsSync(path.join(subtaskDir, 'SPEC.md')) ? 'planned'
+        : 'created'
+      ) : null
+      const description = inputMd?.match(/\*\*Description:\*\*\s*(.+)/)?.[1]?.trim() || subtaskId
+      subtasks.push({ subtaskId, subtaskPath, status, subStep, description, inputMd })
+    }
+    subtasks.sort((a, b) => a.subtaskId.localeCompare(b.subtaskId))
+    res.json(subtasks)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── fixes (bug fix runs on completed tasks) ─────────────────────────────────
+
+app.post('/api/tasks/:project/:taskId/fixes', async (req, res) => {
+  try {
+    const { project, taskId } = req.params
+    const { bugDescription } = req.body
+    if (!bugDescription?.trim()) return res.status(400).json({ error: 'bugDescription required' })
+
+    const taskDir = path.join(WORKSPACE, 'tasks', project, taskId)
+    if (!existsSync(taskDir)) return res.status(404).json({ error: 'Task not found' })
+
+    const now = new Date()
+    const pad = (n, l = 2) => String(n).padStart(l, '0')
+    const dateStr = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`
+    const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+    const slug = bugDescription.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
+    const fixId = `${dateStr}-${timeStr}-${slug}`
+    const fixDir = path.join(taskDir, 'fixes', fixId)
+
+    await mkdir(fixDir, { recursive: true })
+    await writeFile(path.join(fixDir, 'bug.md'), `# Bug Report\n\n**Task:** ${taskId}\n**Project:** ${project}\n**Reported:** ${now.toISOString()}\n\n## Description\n\n${bugDescription.trim()}\n`)
+
+    res.json({ fixId, fixPath: `tasks/${project}/${taskId}/fixes/${fixId}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/tasks/:project/:taskId/fixes', async (req, res) => {
+  try {
+    const { project, taskId } = req.params
+    const fixesDir = path.join(WORKSPACE, 'tasks', project, taskId, 'fixes')
+    if (!existsSync(fixesDir)) return res.json([])
+
+    const queue = await readQueue()
+    const dirs = await readdir(fixesDir)
+    const fixes = []
+    for (const fixId of dirs) {
+      const fixDir = path.join(fixesDir, fixId)
+      const s = await stat(fixDir)
+      if (!s.isDirectory()) continue
+      const bugMd = await readIfExists(path.join(fixDir, 'bug.md'))
+      const reviewMd = await readIfExists(path.join(fixDir, 'review.md'))
+      const commitMd = await readIfExists(path.join(fixDir, 'commit.md'))
+      const fixPath = `tasks/${project}/${taskId}/fixes/${fixId}`
+      // cross-ref running processes + queue for live status
+      const wf = runningWorkflows.get(fixPath)
+      const isProcessRunning = wf && wf.exitCode === null
+      const qItem = queue.tasks.find(t => t.type === 'fix' && t.fix_path === fixPath)
+      let status
+      if (isProcessRunning) status = 'running'
+      else if (qItem?.status === 'running') status = 'running'
+      else if (qItem?.status === 'pending') status = 'queued'
+      else if (qItem?.status === 'failed') status = 'failed'
+      else if (commitMd) status = 'fixed'
+      else if (reviewMd?.includes('APPROVED')) status = 'approved'
+      else if (reviewMd) status = 'issues'
+      else if (existsSync(path.join(fixDir, 'fix-log.md'))) status = 'debugged'
+      else if (existsSync(path.join(fixDir, 'root-cause.md'))) status = 'investigated'
+      else status = 'created'
+      // For running items, derive the sub-step from filesystem
+      const subStep = isProcessRunning ? (
+        commitMd ? 'fixed' : reviewMd?.includes('APPROVED') ? 'approved' : reviewMd ? 'issues'
+        : existsSync(path.join(fixDir, 'fix-log.md')) ? 'debugged'
+        : existsSync(path.join(fixDir, 'root-cause.md')) ? 'investigated'
+        : 'created'
+      ) : null
+      fixes.push({ fixId, fixPath, status, subStep, bugMd })
+    }
+    fixes.sort((a, b) => a.fixId.localeCompare(b.fixId))
+    res.json(fixes)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Reset a fix or subtask (delete generated files, keep input)
+app.post('/api/tasks/:project/:taskId/fixes/:fixId/reset', async (req, res) => {
+  try {
+    const { project, taskId, fixId } = req.params
+    const fixDir = path.join(WORKSPACE, 'tasks', project, taskId, 'fixes', fixId)
+    if (!existsSync(fixDir)) return res.status(404).json({ error: 'Fix not found' })
+    if (existsSync(path.join(fixDir, 'commit.md'))) return res.status(400).json({ error: 'Cannot reset a completed fix' })
+    const entries = await readdir(fixDir)
+    for (const entry of entries) {
+      if (entry === 'input.md' || entry === 'bug.md') continue
+      await rm(path.join(fixDir, entry), { recursive: true })
+    }
+    // Clear queue entry if exists
+    const q = await readQueue()
+    const fixPath = `tasks/${project}/${taskId}/fixes/${fixId}`
+    q.tasks = q.tasks.filter(t => !(t.type === 'fix' && t.fix_path === fixPath))
+    await writeQueue(q)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/tasks/:project/:taskId/subtasks/:subtaskId/reset', async (req, res) => {
+  try {
+    const { project, taskId, subtaskId } = req.params
+    const subtaskDir = path.join(WORKSPACE, 'tasks', project, taskId, 'subtasks', subtaskId)
+    if (!existsSync(subtaskDir)) return res.status(404).json({ error: 'Sub-task not found' })
+    if (existsSync(path.join(subtaskDir, 'commit.md'))) return res.status(400).json({ error: 'Cannot reset a completed sub-task' })
+    const entries = await readdir(subtaskDir)
+    for (const entry of entries) {
+      if (entry === 'input.md') continue
+      await rm(path.join(subtaskDir, entry), { recursive: true })
+    }
+    // Recreate empty dirs
+    await mkdir(path.join(subtaskDir, 'research'), { recursive: true })
+    await mkdir(path.join(subtaskDir, 'review'), { recursive: true })
+    // Clear queue entry if exists
+    const q = await readQueue()
+    const subtaskPath = `tasks/${project}/${taskId}/subtasks/${subtaskId}`
+    q.tasks = q.tasks.filter(t => !(t.type === 'subtask' && t.subtask_path === subtaskPath))
+    await writeQueue(q)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/tasks/:project/:taskId/fixes/:fixId', async (req, res) => {
+  try {
+    const { project, taskId, fixId } = req.params
+    const fixDir = path.join(WORKSPACE, 'tasks', project, taskId, 'fixes', fixId)
+    if (!existsSync(fixDir)) return res.status(404).json({ error: 'Fix not found' })
+    await rm(fixDir, { recursive: true })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/tasks/:project/:taskId/subtasks/:subtaskId', async (req, res) => {
+  try {
+    const { project, taskId, subtaskId } = req.params
+    const subtaskDir = path.join(WORKSPACE, 'tasks', project, taskId, 'subtasks', subtaskId)
+    if (!existsSync(subtaskDir)) return res.status(404).json({ error: 'Sub-task not found' })
+    await rm(subtaskDir, { recursive: true })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.post('/api/tasks', async (req, res) => {
   try {
-    const { description, targetPath } = req.body
+    const { description, targetPath, ticketId } = req.body
     if (!description?.trim()) return res.status(400).json({ error: 'description required' })
 
     const project = targetPath
@@ -155,9 +381,10 @@ app.post('/api/tasks', async (req, res) => {
     const pad = (n, l = 2) => String(n).padStart(l, '0')
     const dateStr = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`
     const timeStr = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-    const descSlug = description.toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
-    const taskId = `${dateStr}-${timeStr}-${descSlug}`
+    const slug = ticketId?.trim()
+      ? ticketId.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      : description.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
+    const taskId = `${dateStr}-${timeStr}-${slug}`
     const taskDir = path.join(WORKSPACE, 'tasks', project, taskId)
 
     await mkdir(path.join(taskDir, 'code'), { recursive: true })
@@ -191,6 +418,16 @@ app.post('/api/tasks', async (req, res) => {
     }
 
     // Write input.md
+    // Check for per-project MCP config
+    const mcpConfig = await readProjectMcpConfig(project)
+    const mcpServerNames = Object.keys(mcpConfig.mcpServers || {})
+    const mcpSection = mcpServerNames.length > 0
+      ? `\n## Available MCP Tools\n\nThis project has ${mcpServerNames.length} MCP server(s) configured: **${mcpServerNames.join(', ')}**.\nThese tools are automatically available to all agents during the workflow.\n\n${mcpServerNames.map(name => {
+          const cfg = mcpConfig.mcpServers[name]
+          return `- **${name}**: \`${cfg.command} ${(cfg.args || []).join(' ')}\``
+        }).join('\n')}\n\nAgents SHOULD use these MCP tools to explore the codebase (query symbols, check impact, understand code structure) before making changes.\n`
+      : ''
+
     await writeFile(path.join(taskDir, 'input.md'), `# Task Input
 
 **Task ID:** ${taskId}
@@ -206,7 +443,7 @@ app.post('/api/tasks', async (req, res) => {
 ## Project Context
 
 See: projects/${project}/context.md
-
+${mcpSection}
 ## User's Request
 
 ${description}
@@ -223,7 +460,312 @@ ${description}
 `)
     }
 
+    // Auto-add target repo to user's additionalDirectories so subagents can access it
+    if (targetPath) {
+      const userSettingsPath = path.join(process.env.HOME, '.claude', 'settings.json')
+      try {
+        const raw = await readFile(userSettingsPath, 'utf8')
+        const settings = JSON.parse(raw)
+        const dirs = settings.permissions?.additionalDirectories || []
+        if (!dirs.includes(targetPath)) {
+          dirs.push(targetPath)
+          if (!settings.permissions) settings.permissions = {}
+          settings.permissions.additionalDirectories = dirs
+          await writeFile(userSettingsPath, JSON.stringify(settings, null, 2) + '\n')
+        }
+      } catch { /* ignore — settings file may not exist */ }
+    }
+
     res.json({ taskId, project, taskDir: `tasks/${project}/${taskId}` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── mcp_server.json (single source of truth for catalog + repositories) ────
+
+const mcpServerPath = path.join(WORKSPACE, 'mcp_server.json')
+
+async function readMcpServer() {
+  try { return JSON.parse(await readFile(mcpServerPath, 'utf8')) }
+  catch { return { repositories: [], catalog: [] } }
+}
+
+async function writeMcpServer(data) {
+  await writeFile(mcpServerPath, JSON.stringify(data, null, 2) + '\n')
+}
+
+// ─── catalog ─────────────────────────────────────────────────────────────────
+
+app.get('/api/catalog', async (req, res) => {
+  const data = await readMcpServer()
+  res.json(data.catalog || [])
+})
+
+app.post('/api/catalog', async (req, res) => {
+  try {
+    const item = req.body
+    if (!item?.name?.trim()) return res.status(400).json({ error: 'name required' })
+    const data = await readMcpServer()
+    const idx = (data.catalog || []).findIndex(c => c.name === item.name)
+    if (idx >= 0) data.catalog[idx] = item
+    else (data.catalog = data.catalog || []).push(item)
+    await writeMcpServer(data)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/catalog/:name', async (req, res) => {
+  try {
+    const data = await readMcpServer()
+    data.catalog = (data.catalog || []).filter(c => c.name !== req.params.name)
+    await writeMcpServer(data)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── repositories (per-project MCP management) ─────────────────────────────
+
+const projectMcpPath = (project) => path.join(WORKSPACE, 'projects', project, 'mcp.json')
+
+async function readProjectMcpConfig(project) {
+  try { return JSON.parse(await readFile(projectMcpPath(project), 'utf8')) }
+  catch { return { mcpServers: {} } }
+}
+
+async function getRepos() {
+  const data = await readMcpServer()
+  // Migrate from old repositories.json if mcp_server.json has no repos yet
+  if (!data.repositories || data.repositories.length === 0) {
+    const oldPath = path.join(WORKSPACE, 'repositories.json')
+    if (existsSync(oldPath)) {
+      try {
+        data.repositories = JSON.parse(await readFile(oldPath, 'utf8'))
+        await writeMcpServer(data)
+      } catch { data.repositories = [] }
+    } else {
+      // Scan projects/ dir as fallback
+      const projectsDir = path.join(WORKSPACE, 'projects')
+      if (existsSync(projectsDir)) {
+        const dirs = await readdir(projectsDir)
+        data.repositories = []
+        for (const name of dirs) {
+          const s = await stat(path.join(projectsDir, name))
+          if (!s.isDirectory()) continue
+          let repoPath = ''
+          const contextFile = path.join(projectsDir, name, 'context.md')
+          if (existsSync(contextFile)) {
+            const content = await readFile(contextFile, 'utf8')
+            const m = content.match(/\*\*Repo path:\*\*\s*(.+)/)
+            if (m && m[1].trim() !== 'N/A') repoPath = m[1].trim()
+          }
+          data.repositories.push({ name, path: repoPath, addedAt: new Date().toISOString() })
+        }
+        await writeMcpServer(data)
+      }
+    }
+  }
+  return data.repositories || []
+}
+
+app.get('/api/repositories', async (req, res) => {
+  try {
+    const repos = await getRepos()
+    const enriched = await Promise.all(repos.map(async (r) => {
+      const mcpConfig = await readProjectMcpConfig(r.name)
+      return { name: r.name, repoPath: r.path || '', mcpServerCount: Object.keys(mcpConfig.mcpServers || {}).length }
+    }))
+    res.json(enriched)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/repositories', async (req, res) => {
+  try {
+    const { path: repoPath, name: customName } = req.body
+    if (!repoPath?.trim()) return res.status(400).json({ error: 'path required' })
+
+    const name = customName?.trim() ||
+      path.basename(repoPath.trim()).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+    const data = await readMcpServer()
+    data.repositories = data.repositories || []
+    if (data.repositories.find(r => r.name === name)) {
+      return res.status(409).json({ error: `Repository "${name}" already exists` })
+    }
+
+    data.repositories.push({ name, path: repoPath.trim(), addedAt: new Date().toISOString() })
+    await writeMcpServer(data)
+
+    // Create projects/<name>/context.md if not exists
+    const contextPath = path.join(WORKSPACE, 'projects', name, 'context.md')
+    if (!existsSync(contextPath)) {
+      await mkdir(path.dirname(contextPath), { recursive: true })
+      await writeFile(contextPath, `# Project Context: ${name}
+
+**Repo path:** ${repoPath.trim()}
+
+## Tech Stack
+
+<!-- Describe the tech stack, frameworks, languages used -->
+
+## Coding Conventions
+
+<!-- Naming conventions, file structure rules, patterns to follow -->
+
+## Forbidden Patterns
+
+<!-- Things agents must NOT do in this project -->
+
+## Notes
+
+<!-- Any other context agents should know before working on this project -->
+`)
+    }
+
+    // Auto-add to additionalDirectories
+    const userSettingsPath = path.join(process.env.HOME, '.claude', 'settings.json')
+    try {
+      const raw = await readFile(userSettingsPath, 'utf8')
+      const settings = JSON.parse(raw)
+      const dirs = settings.permissions?.additionalDirectories || []
+      if (!dirs.includes(repoPath.trim())) {
+        dirs.push(repoPath.trim())
+        if (!settings.permissions) settings.permissions = {}
+        settings.permissions.additionalDirectories = dirs
+        await writeFile(userSettingsPath, JSON.stringify(settings, null, 2) + '\n')
+      }
+    } catch { /* ignore */ }
+
+    res.json({ name, path: repoPath.trim() })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/repositories/:name', async (req, res) => {
+  try {
+    const data = await readMcpServer()
+    const before = (data.repositories || []).length
+    data.repositories = (data.repositories || []).filter(r => r.name !== req.params.name)
+    if (data.repositories.length === before) return res.status(404).json({ error: 'Not found' })
+    await writeMcpServer(data)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/repositories/:project/mcp', async (req, res) => {
+  try {
+    res.json(await readProjectMcpConfig(req.params.project))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.put('/api/repositories/:project/mcp/:serverName', async (req, res) => {
+  try {
+    const { project, serverName } = req.params
+    const config = await readProjectMcpConfig(project)
+    config.mcpServers[serverName] = req.body
+    const p = projectMcpPath(project)
+    await mkdir(path.dirname(p), { recursive: true })
+    await writeFile(p, JSON.stringify(config, null, 2) + '\n')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/repositories/:project/mcp/:serverName', async (req, res) => {
+  try {
+    const { project, serverName } = req.params
+    const config = await readProjectMcpConfig(project)
+    delete config.mcpServers[serverName]
+    await writeFile(projectMcpPath(project), JSON.stringify(config, null, 2) + '\n')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── graph (GitNexus integration) ───────────────────────────────────────────
+
+app.get('/api/repositories/:project/graph', async (req, res) => {
+  try {
+    const { project } = req.params
+    const contextFile = path.join(WORKSPACE, 'projects', project, 'context.md')
+    if (!existsSync(contextFile)) return res.status(404).json({ error: 'Project not found' })
+
+    // Get repo path from context.md
+    const content = await readFile(contextFile, 'utf8')
+    const m = content.match(/\*\*Repo path:\*\*\s*(.+)/)
+    if (!m || m[1].trim() === 'N/A') return res.status(400).json({ error: 'No repo path' })
+    const repoPath = m[1].trim()
+
+    // Check if gitnexus is indexed
+    if (!existsSync(path.join(repoPath, '.gitnexus'))) {
+      return res.json({ indexed: false, nodes: [], edges: [] })
+    }
+
+    // Run cypher queries for nodes and edges
+    const runCypher = (query) => new Promise((resolve, reject) => {
+      const proc = spawn('npx', ['-y', 'gitnexus@latest', 'cypher', query], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] })
+      let out = ''
+      proc.stdout.on('data', c => { out += c.toString() })
+      proc.on('close', (code) => {
+        if (code !== 0) { resolve({ markdown: '', row_count: 0 }); return }
+        try { resolve(JSON.parse(out)) } catch { resolve({ markdown: '', row_count: 0 }) }
+      })
+      proc.on('error', () => resolve({ markdown: '', row_count: 0 }))
+    })
+
+    const parseTable = (md) => {
+      if (!md) return []
+      const lines = md.trim().split('\n')
+      if (lines.length < 3) return []
+      const headers = lines[0].split('|').map(h => h.trim()).filter(Boolean)
+      return lines.slice(2).map(line => {
+        const vals = line.split('|').map(v => v.trim()).filter(Boolean)
+        return Object.fromEntries(headers.map((h, i) => [h, vals[i] || '']))
+      })
+    }
+
+    const [nodesResult, edgesResult] = await Promise.all([
+      runCypher("MATCH (n) WHERE labels(n) <> 'Folder' RETURN id(n) as id, n.name as name, labels(n) as kind, n.filePath as file"),
+      runCypher("MATCH (n)-[r:CodeRelation]->(m) WHERE labels(n) <> 'Folder' AND labels(m) <> 'Folder' RETURN id(n) as source, id(m) as target, r.type as rel, n.name as sourceName, m.name as targetName"),
+    ])
+
+    const nodes = parseTable(nodesResult.markdown)
+    const edges = parseTable(edgesResult.markdown)
+
+    res.json({ indexed: true, nodes, edges })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/repositories/:project/graph/index', async (req, res) => {
+  try {
+    const { project } = req.params
+    const content = await readFile(path.join(WORKSPACE, 'projects', project, 'context.md'), 'utf8')
+    const m = content.match(/\*\*Repo path:\*\*\s*(.+)/)
+    if (!m) return res.status(400).json({ error: 'No repo path' })
+    const repoPath = m[1].trim()
+
+    const proc = spawn('npx', ['-y', 'gitnexus@latest', 'analyze'], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    proc.stdout.on('data', c => { out += c.toString() })
+    proc.on('close', (code) => {
+      res.json({ ok: code === 0, output: out.trim() })
+    })
+    proc.on('error', err => res.status(500).json({ error: err.message }))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -256,16 +798,19 @@ app.get('/api/queue', async (req, res) => {
 
 app.post('/api/queue/add', async (req, res) => {
   try {
-    const { description, target, task_id, project } = req.body
+    const { description, target, task_id, project, type, task_path, fix_path, subtask_path } = req.body
     if (!description?.trim()) return res.status(400).json({ error: 'description required' })
     const queue = await readQueue()
     queue.tasks.push({
       description: description.trim(),
       target: target?.trim() || null,
       status: 'pending',
-      // pre-populated when adding from an existing task → queue skips /create-task
+      type: type || 'task',          // 'task' | 'fix' | 'subtask'
       task_id: task_id || null,
       project: project || null,
+      task_path: task_path || null,  // for fix/subtask: parent task path
+      fix_path: fix_path || null,    // for type='fix'
+      subtask_path: subtask_path || null, // for type='subtask'
       added_at: new Date().toISOString(),
       finished_at: null,
       error: null,
@@ -288,6 +833,67 @@ app.delete('/api/queue/clear', async (req, res) => {
     } else {
       queue.tasks = queue.tasks.filter(t => t.status !== 'done')
     }
+    await writeQueue(queue)
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/queue/retry', async (req, res) => {
+  try {
+    const { index } = req.body
+    const queue = await readQueue()
+    if (index < 0 || index >= queue.tasks.length) return res.status(400).json({ error: 'Invalid index' })
+    const item = queue.tasks[index]
+    if (item.status !== 'failed') return res.status(400).json({ error: 'Can only retry failed items' })
+    item.status = 'pending'
+    item.error = null
+    item.finished_at = null
+    await writeQueue(queue)
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/queue/cancel', async (req, res) => {
+  try {
+    if (!queueRunning) return res.status(400).json({ error: 'Nothing is running' })
+    const { proc, path: trackPath } = queueRunning
+    console.log(`[Queue] Cancelling: ${trackPath}`)
+    proc.kill('SIGTERM')
+    // proc.on('close') handler will set status to failed and clear queueRunning
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/queue/remove', async (req, res) => {
+  try {
+    const { index } = req.body
+    const queue = await readQueue()
+    if (index < 0 || index >= queue.tasks.length) return res.status(400).json({ error: 'Invalid index' })
+    const item = queue.tasks[index]
+    if (item.status === 'running') return res.status(400).json({ error: 'Cannot remove running item' })
+    queue.tasks.splice(index, 1)
+    await writeQueue(queue)
+    res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/queue/reorder', async (req, res) => {
+  try {
+    const { fromIndex, toIndex } = req.body
+    const queue = await readQueue()
+    if (fromIndex < 0 || fromIndex >= queue.tasks.length || toIndex < 0 || toIndex >= queue.tasks.length) {
+      return res.status(400).json({ error: 'Invalid index' })
+    }
+    const [item] = queue.tasks.splice(fromIndex, 1)
+    queue.tasks.splice(toIndex, 0, item)
     await writeQueue(queue)
     res.json({ success: true })
   } catch (err) {
@@ -568,63 +1174,104 @@ app.delete('/api/commands/:filename', async (req, res) => {
   }
 })
 
-// ─── prompt improvement via claude ──────────────────────────────────────────
+// ─── native folder picker (macOS osascript) ─────────────────────────────────
+
+app.post('/api/browse-folder', async (req, res) => {
+  const { prompt: dialogPrompt = 'Select repository folder' } = req.body || {}
+  const escaped = dialogPrompt.replace(/'/g, "\\'")
+  const proc = spawn(
+    `osascript -e 'POSIX path of (choose folder with prompt "${escaped}")'`,
+    [], { shell: true }
+  )
+  let out = '', err = ''
+  proc.stdout.on('data', c => { out += c.toString() })
+  proc.stderr.on('data', c => { err += c.toString() })
+  proc.on('close', code => {
+    if (code !== 0) return res.status(400).json({ cancelled: true })
+    res.json({ path: out.trim().replace(/\/$/, '') }) // strip trailing slash
+  })
+  proc.on('error', e => res.status(500).json({ error: e.message }))
+})
+
+// ─── prompt enhancer agent ──────────────────────────────────────────────────
 
 app.post('/api/improve-prompt', async (req, res) => {
-  const { description, mode } = req.body // mode: 'task' | 'investigate'
+  const { description, mode, targetRepo } = req.body
   if (!description?.trim()) return res.status(400).json({ error: 'description required' })
+  if (!targetRepo?.trim()) return res.status(400).json({ error: 'targetRepo required' })
 
-  const context = mode === 'investigate'
-    ? 'The user is describing a bug to investigate (find root cause).'
-    : 'The user is describing a coding task for an AI agent (build, fix, refactor, etc.).'
+  // Load the agent soul from .claude/agents/prompt-enhancer.md (body = system prompt)
+  const agentFile = await readFile(path.join(WORKSPACE, '.claude/agents/prompt-enhancer.md'), 'utf8')
+  const systemPrompt = matter(agentFile).content.trim()
 
-  const systemPrompt = `You are a prompt quality assistant for a multi-agent coding system. ${context}
+  const intent = mode === 'investigate' ? 'finding the root cause of a bug'
+    : mode === 'fix' ? 'reporting a bug to be fixed in an existing completed task'
+    : mode === 'subtask' ? 'describing a related feature or enhancement to add on top of an existing completed task'
+    : 'building or fixing a feature'
+  const userMessage = `The user wants a task for ${intent}. Their description:\n"""\n${description.trim()}\n"""\n\nTarget repository: ${targetRepo.trim()}\n\nRespond ONLY with valid JSON — no markdown, no preamble:\n{"action":"rewrite","result":"rewritten prompt","explanation":"one sentence"}\nor\n{"action":"ask","result":["question 1","question 2"],"explanation":"one sentence"}`
 
-The user wrote this description:
-"""
-${description.trim()}
-"""
+  // Stream NDJSON — each line is a JSON event
+  res.setHeader('Content-Type', 'application/x-ndjson')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('X-Accel-Buffering', 'no') // disable nginx buffering if proxied
 
-Your job:
-- If the description has enough context for an AI agent to act on, rewrite it as a clear, specific, technical description. Make it concise but complete — include what, where, and expected behavior if relevant.
-- If critical information is missing (e.g. which feature, which error, which file/page/endpoint), ask 1-3 targeted clarifying questions. No more than 3.
-
-Respond ONLY with valid JSON in this exact format:
-{
-  "action": "rewrite" | "ask",
-  "result": "improved description string" | ["question 1", "question 2"],
-  "explanation": "one short sentence on what you changed or what's missing"
-}`
+  const send = (obj) => res.write(JSON.stringify(obj) + '\n')
 
   try {
-    // Escape for shell
-    const escaped = systemPrompt.replace(/"/g, '\\"').replace(/\n/g, '\\n')
     const proc = spawn(
-      `claude -p "${escaped}"`,
-      [],
-      { shell: true, cwd: WORKSPACE, env: process.env }
+      'claude',
+      ['--system-prompt', systemPrompt, '-p', userMessage],
+      { cwd: targetRepo.trim(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }
     )
 
-    let stdout = ''
-    let stderr = ''
-    proc.stdout.on('data', chunk => { stdout += chunk.toString() })
-    proc.stderr.on('data', chunk => { stderr += chunk.toString() })
-    proc.on('close', (code) => {
-      if (code !== 0) return res.status(500).json({ error: stderr || 'Claude exited with error' })
-      // Extract JSON from response (Claude may wrap in markdown)
-      const match = stdout.match(/\{[\s\S]*\}/)
-      if (!match) return res.status(500).json({ error: 'Could not parse response', raw: stdout })
-      try {
-        const parsed = JSON.parse(match[0])
-        res.json(parsed)
-      } catch {
-        res.status(500).json({ error: 'Invalid JSON from Claude', raw: stdout })
-      }
+    let fullOutput = ''
+
+    proc.stdout.on('data', chunk => {
+      const text = chunk.toString()
+      fullOutput += text
+      send({ chunk: text })
     })
-    proc.on('error', err => res.status(500).json({ error: err.message }))
+
+    proc.on('close', (code) => {
+      if (code !== 0) { send({ error: 'Claude exited with error' }); res.end(); return }
+      const match = fullOutput.match(/\{[\s\S]*\}/)
+      if (!match) { send({ error: 'Could not parse response' }); res.end(); return }
+      try {
+        send({ done: true, result: JSON.parse(match[0]) })
+      } catch {
+        send({ error: 'Invalid JSON from Claude' })
+      }
+      res.end()
+    })
+
+    proc.on('error', err => { send({ error: err.message }); res.end() })
   } catch (err) {
-    res.status(500).json({ error: err.message })
+    send({ error: err.message })
+    res.end()
   }
+})
+
+// ─── running workflows (global, survives WebSocket disconnect) ──────────────
+
+// Key = taskPath, Value = { proc, output: string[], exitCode: number|null }
+const runningWorkflows = new Map()
+
+// REST endpoint: check if a workflow is running or has buffered output
+app.get('/api/workflows/:taskPath(*)', (req, res) => {
+  const wf = runningWorkflows.get(req.params.taskPath)
+  if (!wf) return res.json({ running: false })
+  res.json({
+    running: wf.exitCode === null,
+    exitCode: wf.exitCode,
+    output: wf.output,
+  })
+})
+
+// Expose queue runner status
+app.get('/api/queue/status', (req, res) => {
+  res.json({
+    running: queueRunning ? { type: queueRunning.type, path: queueRunning.path } : null
+  })
 })
 
 // Catch-all for React SPA (production)
@@ -640,86 +1287,644 @@ app.get('*', (req, res) => {
 // ─── websocket ───────────────────────────────────────────────────────────────
 
 wss.on('connection', (ws) => {
-  let currentProc = null
+  const safeSend = (data) => {
+    if (ws.readyState === 1) ws.send(JSON.stringify(data))
+  }
 
-  ws.on('message', (raw) => {
+  // Store on ws object so queue cron broadcast can find subscribers
+  ws.ws.subscribedTask = null
+
+  ws.on('message', async (raw) => {
     let msg
     try { msg = JSON.parse(raw) } catch { return }
 
     if (msg.action === 'run-workflow') {
-      if (currentProc) { currentProc.kill('SIGINT'); currentProc = null }
-
       const { taskPath } = msg
-      ws.send(JSON.stringify({ type: 'started', taskPath }))
 
-      const proc = spawn(
-        `claude -p "/workflow ${taskPath}"`,
-        [],
-        { shell: true, cwd: WORKSPACE, env: process.env }
-      )
-      currentProc = proc
+      // If already running, subscribe to it
+      const existing = runningWorkflows.get(taskPath)
+      if (existing && existing.exitCode === null) {
+        ws.subscribedTask = taskPath
+        // Replay buffered output
+        safeSend({ type: 'started', taskPath })
+        for (const line of existing.output) {
+          safeSend({ type: line.isErr ? 'stderr' : 'stdout', data: line.text })
+        }
+        return
+      }
 
+      // Read target path from task to add as allowed directory
+      const targetInfoPath = path.join(WORKSPACE, taskPath, 'target-info.md')
+      let targetDir = null
+      if (existsSync(targetInfoPath)) {
+        const info = await readFile(targetInfoPath, 'utf8')
+        const m = info.match(/\*\*Path:\*\*\s*(.+)/)
+        if (m) targetDir = m[1].trim()
+      }
+
+      // Start new workflow with streaming output + full permissions for automated pipeline
+      const args = ['-p', `/workflow ${taskPath}`, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+      if (targetDir) args.push('--add-dir', targetDir)
+
+      // Auto-pass per-project MCP config if it exists
+      const projectName = taskPath.split('/')[1] // tasks/{project}/{taskId}
+      const projMcpFile = projectMcpPath(projectName)
+      if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
+
+      const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+
+      const wf = { proc, output: [], exitCode: null }
+      runningWorkflows.set(taskPath, wf)
+      ws.subscribedTask = taskPath
+
+      safeSend({ type: 'started', taskPath })
+
+      // Parse stream-json: each line is a JSON object with type/content
+      let stdoutBuf = ''
       proc.stdout.on('data', (chunk) => {
-        ws.send(JSON.stringify({ type: 'stdout', data: chunk.toString() }))
+        stdoutBuf += chunk.toString()
+        const lines = stdoutBuf.split('\n')
+        stdoutBuf = lines.pop() // keep incomplete line
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            let text = ''
+            if (event.type === 'assistant' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'text') text += block.text
+                else if (block.type === 'tool_use') {
+                  const name = block.name
+                  const input = block.input || {}
+                  if (name === 'Agent') {
+                    text += `\n⚡ [Agent: ${input.description || 'subagent'}] ${input.subagent_type || ''} (${input.model || 'default'})\n`
+                  } else {
+                    text += `\n[${name}] ${JSON.stringify(input).slice(0, 200)}\n`
+                  }
+                }
+              }
+            } else if (event.type === 'tool_result') {
+              // Subagent results — show a summary
+              const content = event.content || ''
+              const summary = typeof content === 'string' ? content : JSON.stringify(content)
+              if (summary.length > 0) {
+                // Only show first 500 chars of agent results to keep terminal readable
+                text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
+              }
+            } else if (event.type === 'result' && event.result) {
+              text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+            }
+            if (text) {
+              wf.output.push({ text, isErr: false })
+              if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+              safeSend({ type: 'stdout', data: text })
+            }
+          } catch {
+            // Not JSON — send as raw text
+            wf.output.push({ text: line, isErr: false })
+            if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+            safeSend({ type: 'stdout', data: line })
+          }
+        }
       })
       proc.stderr.on('data', (chunk) => {
-        ws.send(JSON.stringify({ type: 'stderr', data: chunk.toString() }))
+        const text = chunk.toString()
+        wf.output.push({ text, isErr: true })
+        if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+        safeSend({ type: 'stderr', data: text })
       })
       proc.on('close', (code) => {
-        ws.send(JSON.stringify({ type: 'done', code }))
-        currentProc = null
+        wf.exitCode = code
+        safeSend({ type: 'done', code })
+        // Clean up after 5 minutes (keep output for reconnect)
+        setTimeout(() => runningWorkflows.delete(taskPath), 5 * 60 * 1000)
       })
       proc.on('error', (err) => {
-        ws.send(JSON.stringify({ type: 'error', message: err.message }))
-        currentProc = null
+        wf.exitCode = 1
+        safeSend({ type: 'error', message: err.message })
       })
     }
 
-    if (msg.action === 'run-command') {
-      if (currentProc) { currentProc.kill('SIGINT'); currentProc = null }
+    if (msg.action === 'run-fix') {
+      // Bug fix run: /fix-bugs [taskPath] [fixPath]
+      const { taskPath, fixPath } = msg // taskPath = original task, fixPath = fixes/fixId
 
-      const { command } = msg
-      ws.send(JSON.stringify({ type: 'started', command }))
+      const existing = runningWorkflows.get(fixPath)
+      if (existing && existing.exitCode === null) {
+        ws.subscribedTask = fixPath
+        safeSend({ type: 'started', taskPath: fixPath })
+        for (const line of existing.output) {
+          safeSend({ type: line.isErr ? 'stderr' : 'stdout', data: line.text })
+        }
+        return
+      }
 
-      const proc = spawn(
-        `claude -p "${command.replace(/"/g, '\\"')}"`,
-        [],
-        { shell: true, cwd: WORKSPACE, env: process.env }
-      )
-      currentProc = proc
+      // Track in queue so status persists across reloads
+      try {
+        const q = await readQueue()
+        const existingQ = q.tasks.find(t => t.type === 'fix' && t.fix_path === fixPath)
+        if (existingQ) { existingQ.status = 'running'; existingQ.error = null }
+        else q.tasks.push({ description: fixPath.split('/').pop(), target: null, status: 'running', type: 'fix', task_id: null, project: null, task_path: taskPath, fix_path: fixPath, subtask_path: null, added_at: new Date().toISOString(), finished_at: null, error: null })
+        await writeQueue(q)
+      } catch {}
 
+      // Read target repo from original task
+      const targetInfoPath = path.join(WORKSPACE, taskPath, 'target-info.md')
+      let targetDir = null
+      if (existsSync(targetInfoPath)) {
+        const info = await readFile(targetInfoPath, 'utf8')
+        const m = info.match(/\*\*Path:\*\*\s*(.+)/)
+        if (m) targetDir = m[1].trim()
+      }
+
+      const args = ['-p', `/fix-bugs ${taskPath} ${fixPath}`, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+      if (targetDir) args.push('--add-dir', targetDir)
+
+      const projectName = taskPath.split('/')[1]
+      const projMcpFile = projectMcpPath(projectName)
+      if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
+
+      const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+
+      const wf = { proc, output: [], exitCode: null }
+      runningWorkflows.set(fixPath, wf)
+      ws.subscribedTask = fixPath
+
+      safeSend({ type: 'started', taskPath: fixPath })
+
+      let stdoutBuf = ''
       proc.stdout.on('data', (chunk) => {
-        ws.send(JSON.stringify({ type: 'stdout', data: chunk.toString() }))
+        stdoutBuf += chunk.toString()
+        const lines = stdoutBuf.split('\n')
+        stdoutBuf = lines.pop()
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            let text = ''
+            if (event.type === 'assistant' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'text') text += block.text
+                else if (block.type === 'tool_use') {
+                  const name = block.name
+                  const input = block.input || {}
+                  if (name === 'Agent') {
+                    text += `\n⚡ [Agent: ${input.description || 'subagent'}] ${input.subagent_type || ''}\n`
+                  } else {
+                    text += `\n[${name}] ${JSON.stringify(input).slice(0, 200)}\n`
+                  }
+                }
+              }
+            } else if (event.type === 'tool_result') {
+              const content = event.content || ''
+              const summary = typeof content === 'string' ? content : JSON.stringify(content)
+              if (summary.length > 0) text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
+            } else if (event.type === 'result' && event.result) {
+              text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+            }
+            if (text) {
+              wf.output.push({ text, isErr: false })
+              if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+              safeSend({ type: 'stdout', data: text })
+            }
+          } catch {
+            wf.output.push({ text: line, isErr: false })
+            if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+            safeSend({ type: 'stdout', data: line })
+          }
+        }
       })
       proc.stderr.on('data', (chunk) => {
-        ws.send(JSON.stringify({ type: 'stderr', data: chunk.toString() }))
+        const text = chunk.toString()
+        wf.output.push({ text, isErr: true })
+        if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+        safeSend({ type: 'stderr', data: text })
+      })
+      proc.on('close', async (code) => {
+        wf.exitCode = code
+        safeSend({ type: 'done', code })
+        setTimeout(() => runningWorkflows.delete(fixPath), 5 * 60 * 1000)
+        try {
+          const q = await readQueue()
+          const qi = q.tasks.find(t => t.type === 'fix' && t.fix_path === fixPath)
+          if (qi) { qi.status = code === 0 ? 'done' : 'failed'; qi.finished_at = new Date().toISOString(); if (code !== 0) qi.error = `Exit code ${code}` }
+          await writeQueue(q)
+        } catch {}
+      })
+      proc.on('error', async (err) => {
+        wf.exitCode = 1
+        safeSend({ type: 'error', message: err.message })
+        try {
+          const q = await readQueue()
+          const qi = q.tasks.find(t => t.type === 'fix' && t.fix_path === fixPath)
+          if (qi) { qi.status = 'failed'; qi.finished_at = new Date().toISOString(); qi.error = err.message }
+          await writeQueue(q)
+        } catch {}
+      })
+    }
+
+    if (msg.action === 'run-subtask') {
+      const { taskPath, subtaskPath } = msg
+
+      const existing = runningWorkflows.get(subtaskPath)
+      if (existing && existing.exitCode === null) {
+        ws.subscribedTask = subtaskPath
+        safeSend({ type: 'started', taskPath: subtaskPath })
+        for (const line of existing.output) {
+          safeSend({ type: line.isErr ? 'stderr' : 'stdout', data: line.text })
+        }
+        return
+      }
+
+      // Track in queue so status persists across reloads
+      try {
+        const q = await readQueue()
+        const existingQ = q.tasks.find(t => t.type === 'subtask' && t.subtask_path === subtaskPath)
+        if (existingQ) { existingQ.status = 'running'; existingQ.error = null }
+        else q.tasks.push({ description: subtaskPath.split('/').pop(), target: null, status: 'running', type: 'subtask', task_id: null, project: null, task_path: taskPath, fix_path: null, subtask_path: subtaskPath, added_at: new Date().toISOString(), finished_at: null, error: null })
+        await writeQueue(q)
+      } catch {}
+
+      const targetInfoPath = path.join(WORKSPACE, taskPath, 'target-info.md')
+      let targetDir = null
+      if (existsSync(targetInfoPath)) {
+        const info = await readFile(targetInfoPath, 'utf8')
+        const m = info.match(/\*\*Path:\*\*\s*(.+)/)
+        if (m) targetDir = m[1].trim()
+      }
+
+      const args = ['-p', `/sub-task ${taskPath} ${subtaskPath}`, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+      if (targetDir) args.push('--add-dir', targetDir)
+
+      const projectName = taskPath.split('/')[1]
+      const projMcpFile = projectMcpPath(projectName)
+      if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
+
+      const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+
+      const wf = { proc, output: [], exitCode: null }
+      runningWorkflows.set(subtaskPath, wf)
+      ws.subscribedTask = subtaskPath
+
+      safeSend({ type: 'started', taskPath: subtaskPath })
+
+      let stdoutBuf = ''
+      proc.stdout.on('data', (chunk) => {
+        stdoutBuf += chunk.toString()
+        const lines = stdoutBuf.split('\n')
+        stdoutBuf = lines.pop()
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            let text = ''
+            if (event.type === 'assistant' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'text') text += block.text
+                else if (block.type === 'tool_use') {
+                  const name = block.name
+                  const input = block.input || {}
+                  if (name === 'Agent') text += `\n⚡ [Agent: ${input.description || 'subagent'}] ${input.subagent_type || ''}\n`
+                  else text += `\n[${name}] ${JSON.stringify(input).slice(0, 200)}\n`
+                }
+              }
+            } else if (event.type === 'tool_result') {
+              const content = event.content || ''
+              const summary = typeof content === 'string' ? content : JSON.stringify(content)
+              if (summary.length > 0) text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
+            } else if (event.type === 'result' && event.result) {
+              text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+            }
+            if (text) {
+              wf.output.push({ text, isErr: false })
+              if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+              safeSend({ type: 'stdout', data: text })
+            }
+          } catch {
+            wf.output.push({ text: line, isErr: false })
+            if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+            safeSend({ type: 'stdout', data: line })
+          }
+        }
+      })
+      proc.stderr.on('data', (chunk) => {
+        const text = chunk.toString()
+        wf.output.push({ text, isErr: true })
+        if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+        safeSend({ type: 'stderr', data: text })
+      })
+      proc.on('close', async (code) => {
+        wf.exitCode = code
+        safeSend({ type: 'done', code })
+        setTimeout(() => runningWorkflows.delete(subtaskPath), 5 * 60 * 1000)
+        try {
+          const q = await readQueue()
+          const qi = q.tasks.find(t => t.type === 'subtask' && t.subtask_path === subtaskPath)
+          if (qi) { qi.status = code === 0 ? 'done' : 'failed'; qi.finished_at = new Date().toISOString(); if (code !== 0) qi.error = `Exit code ${code}` }
+          await writeQueue(q)
+        } catch {}
+      })
+      proc.on('error', async (err) => {
+        wf.exitCode = 1
+        safeSend({ type: 'error', message: err.message })
+        try {
+          const q = await readQueue()
+          const qi = q.tasks.find(t => t.type === 'subtask' && t.subtask_path === subtaskPath)
+          if (qi) { qi.status = 'failed'; qi.finished_at = new Date().toISOString(); qi.error = err.message }
+          await writeQueue(q)
+        } catch {}
+      })
+    }
+
+    if (msg.action === 'subscribe') {
+      // Re-subscribe to an existing workflow (e.g. after navigating back)
+      const { taskPath } = msg
+      const wf = runningWorkflows.get(taskPath)
+      if (!wf) { safeSend({ type: 'not-found' }); return }
+      ws.subscribedTask = taskPath
+      safeSend({ type: 'started', taskPath })
+      for (const line of wf.output) {
+        safeSend({ type: line.isErr ? 'stderr' : 'stdout', data: line.text })
+      }
+      if (wf.exitCode !== null) {
+        safeSend({ type: 'done', code: wf.exitCode })
+      }
+    }
+
+    if (msg.action === 'run-command') {
+      const { command } = msg
+      safeSend({ type: 'started', command })
+
+      const proc = spawn(
+        'claude',
+        ['-p', command, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
+        { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+
+      let cmdBuf = ''
+      proc.stdout.on('data', (chunk) => {
+        cmdBuf += chunk.toString()
+        const lines = cmdBuf.split('\n')
+        cmdBuf = lines.pop()
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            let text = ''
+            if (event.type === 'assistant' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'text') text += block.text
+                else if (block.type === 'tool_use') {
+                  const name = block.name
+                  const input = block.input || {}
+                  if (name === 'Agent') {
+                    text += `\n⚡ [Agent: ${input.description || 'subagent'}] ${input.subagent_type || ''} (${input.model || 'default'})\n`
+                  } else {
+                    text += `\n[${name}] ${JSON.stringify(input).slice(0, 200)}\n`
+                  }
+                }
+              }
+            } else if (event.type === 'tool_result') {
+              const content = event.content || ''
+              const summary = typeof content === 'string' ? content : JSON.stringify(content)
+              if (summary.length > 0) {
+                text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
+              }
+            } else if (event.type === 'result' && event.result) {
+              text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+            }
+            if (text) safeSend({ type: 'stdout', data: text })
+          } catch {
+            safeSend({ type: 'stdout', data: line })
+          }
+        }
+      })
+      proc.stderr.on('data', (chunk) => {
+        safeSend({ type: 'stderr', data: chunk.toString() })
       })
       proc.on('close', (code) => {
-        ws.send(JSON.stringify({ type: 'done', code }))
-        currentProc = null
+        safeSend({ type: 'done', code })
       })
       proc.on('error', (err) => {
-        ws.send(JSON.stringify({ type: 'error', message: err.message }))
-        currentProc = null
+        safeSend({ type: 'error', message: err.message })
       })
     }
 
     if (msg.action === 'stop') {
-      if (currentProc) {
-        currentProc.kill('SIGINT')
-        currentProc = null
-        ws.send(JSON.stringify({ type: 'stopped' }))
+      if (ws.subscribedTask) {
+        const wf = runningWorkflows.get(ws.subscribedTask)
+        if (wf && wf.exitCode === null) {
+          wf.proc.kill('SIGINT')
+          wf.exitCode = -1
+          safeSend({ type: 'stopped' })
+          runningWorkflows.delete(ws.subscribedTask)
+        }
       }
     }
   })
 
+  // WebSocket close: do NOT kill the process — let it run in background
   ws.on('close', () => {
-    if (currentProc) { currentProc.kill('SIGINT'); currentProc = null }
+    ws.subscribedTask = null
   })
 })
+
+// ─── Queue cron: polls every 5s, runs one item at a time ─────────────────────
+
+let queueRunning = null // { type, path, proc } — the currently executing queue item
+
+async function getTargetDir(taskPath) {
+  const targetInfoPath = path.join(WORKSPACE, taskPath, 'target-info.md')
+  if (!existsSync(targetInfoPath)) return null
+  const info = await readFile(targetInfoPath, 'utf8')
+  const m = info.match(/\*\*Path:\*\*\s*(.+)/)
+  return m ? m[1].trim() : null
+}
+
+async function queueTick() {
+  // Skip if something is already running
+  if (queueRunning) return
+
+  const q = await readQueue()
+
+  // Fix orphan "running" items — status=running but no actual process (e.g. after server restart)
+  let fixed = false
+  for (const t of q.tasks) {
+    if (t.status === 'running') {
+      const trackPath = t.fix_path || t.subtask_path || t.task_path || `tasks/${t.project}/${t.task_id}`
+      const wf = runningWorkflows.get(trackPath)
+      if (!wf || wf.exitCode !== null) {
+        console.log(`[Queue] Recovering orphan: ${t.description?.slice(0, 50)}`)
+        t.status = 'pending' // re-queue so it runs again
+        t.error = null
+        fixed = true
+      }
+    }
+  }
+  if (fixed) await writeQueue(q)
+
+  const pending = q.tasks.find(t => t.status === 'pending')
+  if (!pending) return
+
+  // Mark as running
+  pending.status = 'running'
+  await writeQueue(q)
+
+  let cmd, trackPath, taskPath
+  if (pending.type === 'fix') {
+    taskPath = pending.task_path
+    trackPath = pending.fix_path
+    cmd = `/fix-bugs ${pending.task_path} ${pending.fix_path}`
+  } else if (pending.type === 'subtask') {
+    taskPath = pending.task_path
+    trackPath = pending.subtask_path
+    cmd = `/sub-task ${pending.task_path} ${pending.subtask_path}`
+  } else if (pending.type === 'investigate') {
+    taskPath = null
+    trackPath = `investigate-${Date.now()}`
+    const desc = pending.description.replace(/\s*\[--\w+(?:\s+"[^"]*")?\]/g, '')
+    cmd = `/investigate "${desc}"`
+    if (pending.target) cmd += ` --target ${pending.target}`
+    if (pending.description.includes('[--fix]')) cmd += ' --fix'
+    const runMatch = pending.description.match(/\[--run(?:\s+"([^"]*)")?\]/)
+    if (runMatch) cmd += runMatch[1] ? ` --run "${runMatch[1]}"` : ' --run'
+  } else {
+    // type = 'task' — run workflow
+    taskPath = pending.task_path || `tasks/${pending.project}/${pending.task_id}`
+    trackPath = taskPath
+    cmd = `/workflow ${taskPath}`
+  }
+
+  const targetDir = pending.type === 'investigate'
+    ? (pending.target || null)
+    : await getTargetDir(pending.type === 'task' ? taskPath : pending.task_path)
+  const args = ['-p', cmd, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+  if (targetDir) args.push('--add-dir', targetDir)
+
+  const projectName = (pending.task_path || taskPath || '').split('/')[1]
+  if (projectName) {
+    const projMcpFile = projectMcpPath(projectName)
+    if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
+  }
+
+  console.log(`[Queue] Starting ${pending.type || 'task'}: ${cmd}`)
+
+  const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+
+  // Track in runningWorkflows so WS clients can subscribe
+  const wf = { proc, output: [], exitCode: null }
+  runningWorkflows.set(trackPath, wf)
+  queueRunning = { type: pending.type, path: trackPath, proc }
+
+  // Broadcast to any subscribed WS clients
+  const broadcast = (msg) => {
+    wss.clients.forEach(client => {
+      if (client.readyState === 1 && client.subscribedTask === trackPath) {
+        client.send(JSON.stringify(msg))
+      }
+    })
+  }
+
+  let stdoutBuf = ''
+  proc.stdout.on('data', (chunk) => {
+    stdoutBuf += chunk.toString()
+    const lines = stdoutBuf.split('\n')
+    stdoutBuf = lines.pop()
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const event = JSON.parse(line)
+        let text = ''
+        if (event.type === 'assistant' && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'text') text += block.text
+            else if (block.type === 'tool_use') {
+              const name = block.name
+              const input = block.input || {}
+              if (name === 'Agent') text += `\n⚡ [Agent: ${input.description || 'subagent'}] ${input.subagent_type || ''}\n`
+              else text += `\n[${name}] ${JSON.stringify(input).slice(0, 200)}\n`
+            }
+          }
+        } else if (event.type === 'tool_result') {
+          const content = event.content || ''
+          const summary = typeof content === 'string' ? content : JSON.stringify(content)
+          if (summary.length > 0) text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
+        } else if (event.type === 'result' && event.result) {
+          text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+        }
+        if (text) {
+          wf.output.push({ text, isErr: false })
+          if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+          broadcast({ type: 'stdout', data: text })
+        }
+      } catch {
+        wf.output.push({ text: line, isErr: false })
+        if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+        broadcast({ type: 'stdout', data: line })
+      }
+    }
+  })
+
+  proc.stderr.on('data', (chunk) => {
+    const text = chunk.toString()
+    wf.output.push({ text, isErr: true })
+    if (wf.output.length > 500) wf.output.splice(0, wf.output.length - 500)
+    broadcast({ type: 'stderr', data: text })
+  })
+
+  proc.on('close', async (code) => {
+    wf.exitCode = code
+    broadcast({ type: 'done', code })
+    setTimeout(() => runningWorkflows.delete(trackPath), 5 * 60 * 1000)
+    queueRunning = null
+    console.log(`[Queue] Finished ${pending.type || 'task'}: ${cmd} (exit ${code})`)
+    try {
+      const q2 = await readQueue()
+      const item = q2.tasks.find(t =>
+        (t.type === 'fix' && t.fix_path === pending.fix_path) ||
+        (t.type === 'subtask' && t.subtask_path === pending.subtask_path) ||
+        (t.type !== 'fix' && t.type !== 'subtask' && t.task_path === pending.task_path && t.status === 'running')
+      )
+      if (item) {
+        // Check filesystem for actual completion (commit.md exists = success regardless of exit code)
+        const itemPath = item.fix_path || item.subtask_path || item.task_path
+        const hasCommit = itemPath && existsSync(path.join(WORKSPACE, itemPath, 'commit.md'))
+        item.status = (code === 0 || hasCommit) ? 'done' : 'failed'
+        item.finished_at = new Date().toISOString()
+        if (code !== 0 && !hasCommit) item.error = `Exit code ${code}`
+      }
+      await writeQueue(q2)
+
+      // Auto-reindex GitNexus graph after successful completion
+      if (item?.status === 'done' && targetDir && existsSync(path.join(targetDir, '.gitnexus'))) {
+        console.log(`[Queue] Reindexing GitNexus graph for ${targetDir}`)
+        const reindex = spawn('npx', ['-y', 'gitnexus@latest', 'analyze'], { cwd: targetDir, stdio: ['ignore', 'pipe', 'pipe'] })
+        reindex.on('close', (c) => console.log(`[Queue] GitNexus reindex ${c === 0 ? 'done' : 'failed'} (exit ${c})`))
+        reindex.on('error', () => {})
+      }
+    } catch {}
+  })
+
+  proc.on('error', async (err) => {
+    wf.exitCode = 1
+    broadcast({ type: 'error', message: err.message })
+    queueRunning = null
+    console.log(`[Queue] Error ${pending.type || 'task'}: ${err.message}`)
+    try {
+      const q2 = await readQueue()
+      const item = q2.tasks.find(t => t.status === 'running')
+      if (item) { item.status = 'failed'; item.finished_at = new Date().toISOString(); item.error = err.message }
+      await writeQueue(q2)
+    } catch {}
+  })
+}
+
+setInterval(queueTick, 5000)
+
 
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
   console.log(`Agent Coding UI → http://localhost:${PORT}`)
   console.log(`Workspace: ${WORKSPACE}`)
+  console.log(`Queue cron: polling every 5s`)
 })

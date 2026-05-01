@@ -54,10 +54,11 @@ const TONE_COLORS = {
 
 // Manual fallback for pairs whose names don't match by substring
 const KNOWN_PAIRS = {
-  'reviewer':       'code-review',
-  'coder-backend':  'code-write',
-  'coder-frontend': 'code-write',
-  'investigator':   'investigate',
+  'reviewer':         'code-review',
+  'coder-backend':    'code-write',
+  'coder-frontend':   'code-write',
+  'investigator':     'investigate',
+  'prompt-enhancer':  'prompt-enhance',
 }
 
 // Try to pair agent with skill by name similarity

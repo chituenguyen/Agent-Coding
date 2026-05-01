@@ -54,19 +54,33 @@ Start processing the queue sequentially. This is the main loop:
 
 ```
 1. Read queue.json
-2. Find first task with status "pending"
-3. If no pending tasks -> check if all are failed -> stop
-4. If pending task found:
+2. Find first item with status "pending"
+3. If no pending items -> check if all are failed -> stop
+4. If pending item found:
    a. Set status to "running" in queue.json
-   b. If task_id and project are already set (pre-created task added from UI):
-      - Skip /create-task — task directory already exists
-   c. Else:
-      - Run /create-task "description" [--target path] to initialize the task directory
-      - Capture task_id and project from the created task
-      - Update queue.json with task_id and project
-   d. Run /workflow tasks/[project]/[task-id]
-   e. If workflow succeeds -> set status to "done", set finished_at
-   f. If workflow fails -> set status to "failed", set error message, set finished_at
+   b. Check item.type:
+
+   type = "fix":
+      - Run /fix-bugs [item.task_path] [item.fix_path]
+      - If succeeds -> status "done", set finished_at
+      - If fails -> status "failed", set error, set finished_at
+
+   type = "subtask":
+      - Run /sub-task [item.task_path] [item.subtask_path]
+      - If succeeds -> status "done", set finished_at
+      - If fails -> status "failed", set error, set finished_at
+
+   type = "task" (or missing/null):
+      - If task_id and project are already set (pre-created task added from UI):
+        → Skip /create-task — task directory already exists
+      - Else:
+        → Run /create-task "description" [--target path] to initialize the task directory
+        → Capture task_id and project from the created task
+        → Update queue.json with task_id and project
+      - Run /workflow tasks/[project]/[task-id]
+      - If workflow succeeds -> status "done", set finished_at
+      - If workflow fails -> status "failed", set error, set finished_at
+
 5. Read queue.json again (may have new tasks added)
 6. Go to step 2
 ```
@@ -90,11 +104,15 @@ Remove tasks from `queue.json`:
 {
   "tasks": [
     {
-      "description": "string — task description",
-      "target": "string|null — target repo path",
+      "description": "string — task/bug/subtask description",
+      "target": "string|null — target repo path (for type=task)",
       "status": "pending|running|done|failed",
-      "task_id": "string|null — set after init-task runs",
-      "project": "string|null — project name from init-task",
+      "type": "task|fix|subtask — defaults to task",
+      "task_id": "string|null — set after create-task runs (type=task only)",
+      "project": "string|null — project name (type=task only)",
+      "task_path": "string|null — parent task path (type=fix|subtask)",
+      "fix_path": "string|null — fix directory path (type=fix)",
+      "subtask_path": "string|null — subtask directory path (type=subtask)",
       "added_at": "ISO datetime",
       "finished_at": "ISO datetime|null",
       "error": "string|null — error message if failed"
