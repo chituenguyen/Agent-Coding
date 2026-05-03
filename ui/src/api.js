@@ -87,4 +87,9 @@ export const api = {
 
   // Native folder picker
   browseFolder: (prompt) => req('POST', '/browse-folder', { prompt }),
+
+  // Remote control
+  getRemoteStatus: () => req('GET', '/remote/status'),
+  enableRemote: () => req('POST', '/remote/enable'),
+  disableRemote: () => req('POST', '/remote/disable'),
 }

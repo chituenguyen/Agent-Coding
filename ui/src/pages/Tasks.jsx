@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge'
+import Terminal from '../components/Terminal'
 
 import Modal from '../components/Modal'
 import TaskFormFields from '../components/TaskFormFields'
@@ -46,7 +47,20 @@ export default function Tasks() {
     finally { setLoading(false) }
   }
 
+  // Silent refresh (no loading spinner)
+  async function refresh() {
+    try { setTasks(await api.getTasks()) } catch { }
+  }
+
   useEffect(() => { load() }, [])
+
+  // Poll task list while any task is running or not in a terminal state
+  useEffect(() => {
+    const hasActive = tasks.some(t => t.running || (t.status !== 'done' && t.status !== 'created'))
+    if (!hasActive) return
+    const t = setInterval(refresh, 3000)
+    return () => clearInterval(t)
+  }, [tasks])
 
   async function handleCreate() {
     if (!form.description.trim() || !form.targetPath.trim()) return
@@ -56,6 +70,14 @@ export default function Tasks() {
         description: form.description.trim(),
         targetPath: form.targetPath.trim(),
         ticketId: form.ticketId.trim() || undefined,
+      })
+      // Auto-add to queue so workflow starts immediately
+      await api.addToQueue({
+        description: form.description.trim(),
+        target: form.targetPath.trim(),
+        task_id: taskId,
+        project,
+        task_path: `tasks/${project}/${taskId}`,
       })
       setShowCreate(false)
       setForm(EMPTY_FORM)
@@ -67,7 +89,7 @@ export default function Tasks() {
 
   async function handleDelete(task, e) {
     e.stopPropagation()
-    if (!confirm(`Delete task "${task.description}"?`)) return
+    if (!confirm(`Delete task "${plainDescription(task.description)}"?`)) return
     try {
       await api.deleteTask(task.project, task.taskId)
       if (selected?.taskId === task.taskId) setSelected(null)
@@ -95,7 +117,7 @@ export default function Tasks() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ── Left: task list ── */}
-      <div className={`flex flex-col border-r border-gray-200 dark:border-gray-700 overflow-hidden transition-all ${selected ? 'w-80 xl:w-96 shrink-0' : 'flex-1 max-w-3xl'}`}>
+      <div className={`flex flex-col border-r border-gray-200 dark:border-gray-700 overflow-hidden transition-all ${selected ? 'hidden md:flex w-80 xl:w-96 shrink-0' : 'flex-1 max-w-3xl'}`}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
           <div>
@@ -203,7 +225,7 @@ export default function Tasks() {
           />
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center text-gray-300 dark:text-gray-700">
+        <div className="hidden md:flex flex-1 items-center justify-center text-gray-300 dark:text-gray-700">
           <div className="text-center">
             <svg className="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -242,6 +264,11 @@ export default function Tasks() {
 
 // ─── Task row ────────────────────────────────────────────────────────────────
 
+// Strip XML tags and return first meaningful line for display
+function plainDescription(desc = '') {
+  return desc.replace(/<\/?[\w_]+>/g, '').replace(/\n+/g, ' ').trim()
+}
+
 function TaskRow({ task, selected, onClick, onDelete }) {
   const date = task.created
     ? new Date(task.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -256,12 +283,12 @@ function TaskRow({ task, selected, onClick, onDelete }) {
       }`}>
       <div className="flex-1 min-w-0">
         <p className={`text-sm font-medium truncate transition-colors ${selected ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-900 dark:text-white group-hover:text-indigo-700 dark:group-hover:text-indigo-300'}`}>
-          {task.description}
+          {plainDescription(task.description)}
         </p>
         {date && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{date}</p>}
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
-        <StatusBadge status={task.status} />
+        <StatusBadge status={task.running && task.status !== 'done' ? 'running' : task.status} />
         <button onClick={onDelete} title="Delete"
           className="opacity-0 group-hover:opacity-100 p-1 rounded text-gray-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-all">
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -287,6 +314,7 @@ function TaskDetailPanel({ project, taskId, onClose, onDeleted }) {
   const [subtaskDesc, setSubtaskDesc] = useState('')
   const [subtaskCreating, setSubtaskCreating] = useState(false)
   const [toast, setToast] = useState(null)
+  const [workflowRunning, setWorkflowRunning] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
   const detailTab = searchParams.get('tab') || 'overview'
   const setDetailTab = (tab) => setSearchParams(prev => { prev.set('tab', tab); return prev }, { replace: true })
@@ -315,8 +343,6 @@ function TaskDetailPanel({ project, taskId, onClose, onDeleted }) {
     const t = setInterval(() => { refresh(); loadFixes(); loadSubtasks() }, 3000)
     return () => clearInterval(t)
   }, [hasActiveChild, taskInProgress])
-
-  const { state: queueState, addToQueue } = useAddToQueue()
 
   async function handleDelete() {
     if (!confirm(`Delete task "${task?.description}"?`)) return
@@ -438,8 +464,7 @@ function TaskDetailPanel({ project, taskId, onClose, onDeleted }) {
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <StatusBadge status={task.status} />
-            <AddToQueueBtn state={queueState} onClick={() => addToQueue(task)} />
+            <StatusBadge status={task.running && task.status !== 'done' ? 'running' : task.status} />
             {task.status === 'done' && (
               <>
                 <button onClick={() => { setDetailTab('subtasks'); setSubtaskDesc(''); setSubtaskModal(true) }}
@@ -521,6 +546,17 @@ function TaskDetailPanel({ project, taskId, onClose, onDeleted }) {
           </div>
         )}
       </div>
+
+      {/* Workflow live terminal — shown when task is in-progress or running */}
+      {task.status !== 'done' && (
+        <div className="mb-4">
+          <Terminal
+            taskPath={`tasks/${project}/${taskId}`}
+            onDone={() => { setWorkflowRunning(false); load(); loadFixes(); loadSubtasks() }}
+            onRunningChange={setWorkflowRunning}
+          />
+        </div>
+      )}
 
       {/* Tabs — only shown for done tasks */}
       {task.status === 'done' && (
@@ -767,8 +803,8 @@ function ChildRow({ item, type, onQueue, onDelete, onReset }) {
   // can act: created, failed, or stalled (stuck mid-workflow)
   const canAct = item.status === 'created' || item.status === 'failed' || isStalled
   const desc = isFix
-    ? item.bugMd?.match(/## Description\s*\n+([\s\S]+?)(\n\n|$)/)?.[1]?.trim().slice(0, 120) || item.fixId
-    : item.description?.slice(0, 120) || item.subtaskId
+    ? plainDescription(item.bugMd?.match(/## Description\s*\n+([\s\S]+?)(\n\n|$)/)?.[1]?.trim() || '').slice(0, 120) || item.fixId
+    : plainDescription(item.description || '').slice(0, 120) || item.subtaskId
   const fullContent = isFix ? item.bugMd : item.inputMd
   const steps = isFix ? FIX_STEPS : SUBTASK_STEPS
   const statusMap = isFix ? FIX_STATUS_TO_STEP : SUBTASK_STATUS_TO_STEP
@@ -874,6 +910,10 @@ function ChildRow({ item, type, onQueue, onDelete, onReset }) {
               ))}
             </div>
           ) : null}
+          {/* Live output terminal for running items */}
+          {item.status === 'running' && (item.fixPath || item.subtaskPath) && (
+            <ChildTerminal trackPath={item.fixPath || item.subtaskPath} />
+          )}
           {fullContent && (
             <pre className="mt-2 text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap font-mono bg-gray-100 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-md p-3 max-h-64 overflow-auto leading-relaxed">{fullContent}</pre>
           )}
@@ -917,53 +957,16 @@ function ChildRow({ item, type, onQueue, onDelete, onReset }) {
 
 // ─── Shared sub-components ───────────────────────────────────────────────────
 
-function useAddToQueue() {
-  const [state, setState] = useState('idle')
-  async function addToQueue(task) {
-    setState('loading')
-    try {
-      await api.addToQueue({
-        description: task.description,
-        target: task.targetPath && task.targetPath !== 'N/A' ? task.targetPath : undefined,
-        task_id: task.taskId,
-        project: task.project,
-        task_path: `tasks/${task.project}/${task.taskId}`,
-      })
-      setState('done')
-      setTimeout(() => setState('idle'), 2000)
-    } catch {
-      setState('error')
-      setTimeout(() => setState('idle'), 2000)
-    }
-  }
-  return { state, addToQueue }
-}
-
-function AddToQueueBtn({ state, onClick }) {
-  const config = {
-    idle:    { label: 'Add to Queue', cls: 'text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950' },
-    loading: { label: 'Adding...', cls: 'text-gray-400 border-gray-200 dark:border-gray-700 cursor-not-allowed' },
-    done:    { label: 'Added!', cls: 'text-green-600 border-green-200 bg-green-50 dark:bg-green-950' },
-    error:   { label: 'Failed', cls: 'text-red-500 border-red-200 bg-red-50 dark:bg-red-950' },
-  }
-  const { label, cls } = config[state] ?? config.idle
-  return (
-    <button onClick={onClick} disabled={state !== 'idle'}
-      className={`px-2.5 py-1 text-xs font-medium border rounded-lg transition-colors ${cls}`}>
-      {label}
-    </button>
-  )
-}
-
 function DescriptionCard({ description }) {
   const [expanded, setExpanded] = useState(false)
-  const isLong = description.length > 200
+  const plain = description.replace(/<\/?[\w_]+>/g, '').replace(/\n+/g, ' ').trim()
+  const isLong = plain.length > 200
   return (
     <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5">
       {isLong && !expanded ? (
         <>
           <p className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed whitespace-pre-wrap">
-            {description.slice(0, 200).trim()}...
+            {plain.slice(0, 200).trim()}...
           </p>
           <button onClick={() => setExpanded(true)}
             className="mt-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-medium">
@@ -983,6 +986,80 @@ function DescriptionCard({ description }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+function ChildTerminal({ trackPath }) {
+  const [lines, setLines] = useState([])
+  const [connected, setConnected] = useState(false)
+  const bottomRef = useRef(null)
+  const wsRef = useRef(null)
+
+  useEffect(() => {
+    if (!trackPath) return
+
+    // First load history via REST
+    fetch(`/api/workflows/${encodeURIComponent(trackPath)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.output?.length) {
+          const history = data.output
+            .map(l => ({ text: l.text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ''), isErr: l.isErr }))
+            .filter(l => l.text)
+          setLines(history)
+        }
+
+        // Then subscribe for live updates
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        const ws = new WebSocket(`${protocol}://${window.location.host}/ws`)
+        wsRef.current = ws
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ action: 'subscribe', taskPath: trackPath }))
+          setConnected(true)
+        }
+
+        let replayDone = false
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data)
+          if (msg.type === 'started') {
+            setTimeout(() => { replayDone = true }, 500)
+            return
+          }
+          if (!replayDone && (msg.type === 'stdout' || msg.type === 'stderr')) return
+          if (msg.type === 'stdout' || msg.type === 'stderr') {
+            const clean = (msg.data || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+            if (clean) setLines(prev => [...prev.slice(-200), { text: clean, isErr: msg.type === 'stderr' }])
+          } else if (msg.type === 'done') {
+            setLines(prev => [...prev, { text: `\n● Process exited with code ${msg.code}`, isErr: msg.code !== 0 }])
+          }
+        }
+
+        ws.onerror = () => setConnected(false)
+        ws.onclose = () => { wsRef.current = null; setConnected(false) }
+      })
+      .catch(() => {})
+
+    return () => { if (wsRef.current) { wsRef.current.close(); wsRef.current = null } }
+  }, [trackPath])
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines])
+
+  return (
+    <div className="mt-2 border border-gray-800 rounded-lg overflow-hidden bg-gray-950">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-900 border-b border-gray-800">
+        <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-500'}`} />
+        <span className="text-xs font-mono text-gray-500">Live output</span>
+      </div>
+      <div className="overflow-y-auto p-3 max-h-48 font-mono text-xs">
+        {lines.length === 0 ? (
+          <span className="text-gray-600">Waiting for output...</span>
+        ) : lines.map((line, i) => (
+          <pre key={i} className={`whitespace-pre-wrap break-words leading-relaxed ${line.isErr ? 'text-red-400' : 'text-green-300'}`}>{line.text}</pre>
+        ))}
+        <div ref={bottomRef} />
+      </div>
     </div>
   )
 }

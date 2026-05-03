@@ -2,6 +2,103 @@ import { useState, useEffect } from 'react'
 
 const API_BASE = '/api'
 
+// Render XML-tagged content with syntax highlighting
+function XmlPromptDisplay({ text }) {
+  // Split into segments: XML tags and content
+  const parts = []
+  const tagRe = /(<\/?[\w_]+>)/g
+  let last = 0
+  let m
+  while ((m = tagRe.exec(text)) !== null) {
+    if (m.index > last) parts.push({ type: 'text', value: text.slice(last, m.index) })
+    const isClose = m[1].startsWith('</')
+    const tagName = m[1].replace(/[<>/]/g, '')
+    parts.push({ type: 'tag', isClose, tagName, value: m[1] })
+    last = m.index + m[1].length
+  }
+  if (last < text.length) parts.push({ type: 'text', value: text.slice(last) })
+
+  return (
+    <div className="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">
+      {parts.map((p, i) =>
+        p.type === 'tag' ? (
+          <span key={i} className={p.isClose
+            ? 'text-indigo-400 dark:text-indigo-400'
+            : 'text-indigo-600 dark:text-indigo-300 font-semibold'
+          }>{p.value}</span>
+        ) : (
+          <span key={i} className="text-gray-700 dark:text-gray-200">{p.value}</span>
+        )
+      )}
+    </div>
+  )
+}
+
+function RewrittenResult({ data, editedResult, setEditedResult, onAccept, onReEnhance, onDismiss }) {
+  const [editing, setEditing] = useState(false)
+  const hasXml = /<[\w_]+>/.test(editedResult)
+
+  return (
+    <div className="border border-green-200 dark:border-green-800 rounded-lg overflow-hidden">
+      {/* Header */}
+      <div className="px-3 py-2 bg-green-50 dark:bg-green-950 border-b border-green-100 dark:border-green-900 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-green-700 dark:text-green-300">Suggested rewrite</p>
+          {data.explanation && (
+            <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">{data.explanation}</p>
+          )}
+        </div>
+        {hasXml && (
+          <button
+            type="button"
+            onClick={() => setEditing(e => !e)}
+            className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 mt-0.5 transition-colors"
+          >
+            {editing ? 'Preview' : 'Edit'}
+          </button>
+        )}
+      </div>
+
+      {/* Content — rendered XML or raw textarea */}
+      <div className="bg-white dark:bg-gray-900 px-3 pt-3 pb-2 max-h-72 overflow-y-auto">
+        {editing || !hasXml ? (
+          <textarea
+            rows={8}
+            value={editedResult}
+            onChange={e => setEditedResult(e.target.value)}
+            className="w-full text-xs text-gray-700 dark:text-gray-200 leading-relaxed bg-transparent border-0 outline-none resize-y p-0 font-mono"
+            autoFocus
+          />
+        ) : (
+          <XmlPromptDisplay text={editedResult} />
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-t border-green-100 dark:border-green-900 flex items-center gap-3">
+        <button
+          onClick={onAccept}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors"
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          Use this
+        </button>
+        <button
+          onClick={onReEnhance}
+          className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
+        >
+          Re-enhance
+        </button>
+        <button onClick={onDismiss} className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ml-auto">
+          Discard
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // state: idle | streaming | questions | rewritten | error
 export default function PromptEvaluator({ value, targetRepo, mode = 'task', onRewrite }) {
   const [state, setState] = useState('idle')
@@ -193,48 +290,14 @@ export default function PromptEvaluator({ value, targetRepo, mode = 'task', onRe
 
       {/* Rewrite result */}
       {state === 'rewritten' && (
-        <div className="border border-green-200 dark:border-green-800 rounded-lg overflow-hidden">
-          {/* Header */}
-          <div className="px-3 py-2 bg-green-50 dark:bg-green-950 border-b border-green-100 dark:border-green-900 flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold text-green-700 dark:text-green-300">Suggested rewrite</p>
-              {data.explanation && (
-                <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">{data.explanation}</p>
-              )}
-            </div>
-            <span className="text-xs text-green-500 dark:text-green-500 shrink-0 mt-0.5">You can edit before using</span>
-          </div>
-          {/* Editable result */}
-          <div className="bg-white dark:bg-gray-900 px-3 pt-3 pb-2">
-            <textarea
-              rows={6}
-              value={editedResult}
-              onChange={e => setEditedResult(e.target.value)}
-              className="w-full text-sm text-gray-700 dark:text-gray-200 leading-relaxed bg-transparent border-0 outline-none resize-y p-0"
-            />
-          </div>
-          {/* Actions */}
-          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-t border-green-100 dark:border-green-900 flex items-center gap-3">
-            <button
-              onClick={handleAccept}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-lg transition-colors"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              Use this
-            </button>
-            <button
-              onClick={handleEnhance}
-              className="text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"
-            >
-              Re-enhance
-            </button>
-            <button onClick={handleDismiss} className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors ml-auto">
-              Discard
-            </button>
-          </div>
-        </div>
+        <RewrittenResult
+          data={data}
+          editedResult={editedResult}
+          setEditedResult={setEditedResult}
+          onAccept={handleAccept}
+          onReEnhance={handleEnhance}
+          onDismiss={handleDismiss}
+        />
       )}
 
       {/* Error */}

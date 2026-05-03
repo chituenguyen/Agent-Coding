@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 
 const mainLinks = [
   {
@@ -66,10 +67,11 @@ const configLinks = [
   },
 ]
 
-function NavItem({ to, label, icon }) {
+function NavItem({ to, label, icon, onClick }) {
   return (
     <NavLink
       to={to}
+      onClick={onClick}
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
           isActive
@@ -85,12 +87,20 @@ function NavItem({ to, label, icon }) {
 }
 
 export default function Sidebar({ theme, setTheme }) {
+  const [open, setOpen] = useState(false)
+  const location = useLocation()
   const isDark = theme === 'dark'
   const themeIcon = isDark ? '🌙' : '☀️'
   const themeLabel = isDark ? 'Dark' : 'Light'
 
-  return (
-    <aside className="w-56 bg-slate-900 text-slate-100 flex flex-col shrink-0">
+  const close = () => setOpen(false)
+
+  // Get current page label for mobile header
+  const currentLabel = [...mainLinks, ...configLinks, { to: '/settings', label: 'Settings' }]
+    .find(l => location.pathname.startsWith(l.to))?.label || 'Tasks'
+
+  const sidebarContent = (
+    <>
       <div className="px-5 py-5 border-b border-slate-700">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
@@ -103,22 +113,29 @@ export default function Sidebar({ theme, setTheme }) {
             <h1 className="text-sm font-bold text-white leading-tight">Agent Coding</h1>
             <p className="text-xs text-slate-400 leading-tight">Multi-agent workspace</p>
           </div>
+          {/* Close button on mobile */}
+          <button onClick={close} className="ml-auto md:hidden p-1 text-slate-400 hover:text-white">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       </div>
 
       <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
-        {mainLinks.map(l => <NavItem key={l.to} {...l} />)}
+        {mainLinks.map(l => <NavItem key={l.to} {...l} onClick={close} />)}
 
         <div className="pt-3 pb-1 px-3">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Configure</p>
         </div>
 
-        {configLinks.map(l => <NavItem key={l.to} {...l} />)}
+        {configLinks.map(l => <NavItem key={l.to} {...l} onClick={close} />)}
       </nav>
 
       <div className="px-3 py-3 border-t border-slate-700 space-y-0.5">
         <NavLink
           to="/settings"
+          onClick={close}
           className={({ isActive }) =>
             `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               isActive
@@ -134,16 +151,43 @@ export default function Sidebar({ theme, setTheme }) {
           </svg>
           Settings
         </NavLink>
-        {/* Theme toggle */}
         <button
           onClick={() => setTheme(isDark ? 'light' : 'dark')}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-          title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
         >
           <span className="text-base leading-none">{themeIcon}</span>
           <span>{themeLabel} mode</span>
         </button>
       </div>
-    </aside>
+    </>
+  )
+
+  return (
+    <>
+      {/* Mobile top bar */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-slate-900 border-b border-slate-700 flex items-center gap-3 px-4 py-3">
+        <button onClick={() => setOpen(true)} className="p-1 text-slate-300 hover:text-white">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <span className="text-sm font-semibold text-white">{currentLabel}</span>
+      </div>
+
+      {/* Mobile overlay */}
+      {open && (
+        <div className="md:hidden fixed inset-0 z-50 bg-black/50" onClick={close} />
+      )}
+
+      {/* Sidebar — always visible on desktop, slide-in on mobile */}
+      <aside className={`
+        bg-slate-900 text-slate-100 flex flex-col shrink-0
+        fixed md:relative inset-y-0 left-0 z-50
+        w-56 transition-transform duration-200
+        ${open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        {sidebarContent}
+      </aside>
+    </>
   )
 }

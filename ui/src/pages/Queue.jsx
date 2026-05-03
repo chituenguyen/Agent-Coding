@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
+const plainDescription = (desc = '') => desc.replace(/<\/?[\w_]+>/g, '').replace(/\n+/g, ' ').trim()
+
 const STATUS_CONFIG = {
   pending: { label: 'Pending',  cls: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300',    icon: '○' },
   running: { label: 'Running',  cls: 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300', icon: '▶' },
@@ -352,7 +354,7 @@ function QueueRow({ task, onNavigate, showReorder, isFirst, isLast, onMoveUp, on
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${typeCfg.cls}`}>{typeCfg.label}</span>
-            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{task.description}</p>
+            <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{plainDescription(task.description)}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {task.task_id && <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{task.task_id}</span>}

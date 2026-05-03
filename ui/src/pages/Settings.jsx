@@ -324,6 +324,9 @@ export default function Settings() {
           </div>
         </Section>
 
+        {/* Remote Control */}
+        <RemoteControlSection />
+
         {/* Display */}
         <Section title="Display" icon="🎨" description="Appearance and output preferences.">
           <div className="space-y-4">
@@ -365,6 +368,107 @@ export default function Settings() {
 
       </div>
     </div>
+  )
+}
+
+function RemoteControlSection() {
+  const [remote, setRemote] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [qr, setQr] = useState(null)
+
+  useEffect(() => {
+    api.getRemoteStatus().then(data => {
+      setRemote(data)
+      // Restore QR from server state after refresh
+      if (data.active && !data.paired && data.qrDataUrl) {
+        setQr({ qrDataUrl: data.qrDataUrl, url: data.url, tunnelUrl: data.tunnelUrl })
+      }
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!remote?.active || remote?.paired) return
+    const t = setInterval(() => {
+      api.getRemoteStatus().then(setRemote).catch(() => {})
+    }, 3000)
+    return () => clearInterval(t)
+  }, [remote?.active, remote?.paired])
+
+  async function handleEnable() {
+    setLoading(true)
+    try {
+      const data = await api.enableRemote()
+      setQr(data)
+      setRemote({ active: true, paired: false, tunnelUrl: data.tunnelUrl })
+    } catch (err) { alert('Failed: ' + err.message) }
+    finally { setLoading(false) }
+  }
+
+  async function handleDisable() {
+    await api.disableRemote()
+    setQr(null)
+    setRemote({ active: false, paired: false, tunnelUrl: null })
+  }
+
+  if (!remote) return null
+
+  return (
+    <Section title="Remote Control" icon="📱" description="Access this UI from your phone — any network, anywhere.">
+      {!remote.active ? (
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-600 dark:text-gray-300">Create a secure tunnel for phone access</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Works from any network (WiFi, 4G, etc.)</p>
+          </div>
+          <button onClick={handleEnable} disabled={loading}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50">
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                Creating tunnel...
+              </span>
+            ) : 'Enable'}
+          </button>
+        </div>
+      ) : remote.paired ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse" />
+            <div>
+              <p className="text-sm font-medium text-green-700 dark:text-green-400">Device connected</p>
+              {remote.tunnelUrl && <p className="text-xs text-gray-500 dark:text-gray-400 font-mono">{remote.tunnelUrl}</p>}
+            </div>
+          </div>
+          <button onClick={handleDisable}
+            className="px-3 py-1.5 text-xs font-medium border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg transition-colors">
+            Disconnect & Close Tunnel
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-xs text-gray-500 dark:text-gray-400">Scan with your phone camera. Only one device can connect.</p>
+          {qr && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="bg-white p-3 rounded-xl shadow-sm">
+                <img src={qr.qrDataUrl} alt="QR Code" className="w-56 h-56" />
+              </div>
+              <p className="text-xs text-gray-400 dark:text-gray-500 font-mono select-all break-all max-w-xs text-center">{qr.url}</p>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+            <span className="text-xs text-yellow-600 dark:text-yellow-400">Waiting for device to scan...</span>
+          </div>
+          <button onClick={handleDisable}
+            className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-red-500 hover:border-red-300 rounded-lg transition-colors">
+            Cancel
+          </button>
+        </div>
+      )}
+    </Section>
   )
 }
 

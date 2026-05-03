@@ -17,7 +17,7 @@ export default function App() {
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950 overflow-hidden">
       <Onboarding />
       <Sidebar theme={theme} setTheme={setTheme} />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto pt-12 md:pt-0">
         <Routes>
           <Route path="/" element={<Navigate to="/tasks" replace />} />
           <Route path="/tasks" element={<Tasks />} />

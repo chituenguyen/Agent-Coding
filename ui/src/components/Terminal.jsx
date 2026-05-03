@@ -207,6 +207,39 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone,
     checkRunning()
   }, [taskPath]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll to detect externally-started workflows (e.g. queue cron)
+  useEffect(() => {
+    if (!taskPath || running || exitCode !== null) return
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/workflows/${encodeURIComponent(taskPath)}`)
+        const data = await res.json()
+        if (data.running) {
+          clearInterval(poll)
+          const historyLines = (data.output || []).map(l => ({
+            text: l.text.replace(ANSI_RE, ''),
+            isErr: l.isErr,
+          })).filter(l => l.text)
+          setLines(historyLines)
+          setReconnected(true)
+          setRunning(true)
+          connectLive('subscribe', { taskPath })
+        } else if (data.output && data.output.length > 0) {
+          clearInterval(poll)
+          const historyLines = (data.output || []).map(l => ({
+            text: l.text.replace(ANSI_RE, ''),
+            isErr: l.isErr,
+          })).filter(l => l.text)
+          setLines(historyLines)
+          setReconnected(true)
+          setExitCode(data.exitCode)
+          onDone?.()
+        }
+      } catch { /* ignore */ }
+    }, 3000)
+    return () => clearInterval(poll)
+  }, [taskPath, running, exitCode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-start for non-workflow commands
   useEffect(() => {
     if (autoStart && command && !taskPath) start()

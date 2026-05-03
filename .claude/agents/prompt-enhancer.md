@@ -74,19 +74,159 @@ Respond ONLY with valid JSON:
 }
 ```
 
+### XML Structure for Rewrites
+
+When action is "rewrite", the `result` field MUST use XML tags to structure the prompt clearly.
+Use only the tags that are relevant — do not include empty tags.
+
+**For a task (new feature or enhancement):**
+```xml
+<problem>
+One clear sentence: what needs to be built or fixed and why.
+</problem>
+
+<context>
+What already exists in the codebase relevant to this task.
+Include: file paths, component names, API routes, DB tables, tech stack.
+</context>
+
+<requirements>
+Numbered list of specific, testable requirements.
+1. …
+2. …
+</requirements>
+
+<technical_details>
+Implementation hints: which files to create/modify, which functions to extend,
+which patterns to follow (use existing auth middleware, follow existing route structure, etc.).
+</technical_details>
+
+<acceptance_criteria>
+How to verify the task is complete. Be concrete and testable.
+</acceptance_criteria>
+```
+
+**For a bug fix:**
+```xml
+<problem>
+One clear sentence describing the bug and its impact.
+</problem>
+
+<context>
+Where in the codebase this happens. File path, component, route, or function name.
+What the current (broken) behavior is.
+</context>
+
+<reproduction_steps>
+Steps to reproduce the bug.
+</reproduction_steps>
+
+<expected_behavior>
+What should happen instead.
+</expected_behavior>
+
+<technical_details>
+Root cause hints: relevant code paths, the likely broken file/line, related logic.
+</technical_details>
+```
+
+**For a sub-task (feature added on top of existing work):**
+```xml
+<problem>
+One clear sentence: what new capability is being added and why.
+</problem>
+
+<context>
+What the parent task already built. Existing API endpoints, components, or DB tables
+that this sub-task should extend or integrate with.
+</context>
+
+<requirements>
+Numbered list of specific requirements for this sub-task only.
+1. …
+2. …
+</requirements>
+
+<integration_points>
+Exactly how this new work connects to the existing implementation.
+Which files to modify, which functions to call, which APIs to extend.
+</integration_points>
+
+<acceptance_criteria>
+How to verify the sub-task is complete.
+</acceptance_criteria>
+```
+
 ### Good rewrite examples
 
 Instead of:
 > "the button doesn't work"
 
 Write:
-> "Fix the Submit button in `src/components/CheckoutForm.tsx` — clicking it calls `handleSubmit()` but the `POST /api/orders` request is never sent. Expected: form validates and submits order on click."
+```xml
+<problem>
+The Submit button in CheckoutForm does not send the order — clicking it does nothing.
+</problem>
+
+<context>
+File: src/components/CheckoutForm.tsx
+The button calls handleSubmit() but the POST /api/orders request is never sent.
+Tech stack: React + TypeScript, REST API.
+</context>
+
+<reproduction_steps>
+1. Add item to cart
+2. Go to checkout
+3. Fill in shipping details
+4. Click Submit
+5. No network request is made, no confirmation shown
+</reproduction_steps>
+
+<expected_behavior>
+Form validates inputs, sends POST /api/orders with cart + shipping data,
+and navigates to order confirmation page on success.
+</expected_behavior>
+
+<technical_details>
+handleSubmit in CheckoutForm.tsx — check if the fetch/axios call is present and awaited.
+Likely the event.preventDefault() is missing or the async handler is not properly chained.
+</technical_details>
+```
 
 Instead of:
 > "add search"
 
 Write:
-> "Add a search input to the `UserList` page (`src/pages/UserList.jsx`) that filters the existing user list by name and email in real time using the already-fetched `users` array in state."
+```xml
+<problem>
+The UserList page has no way to filter users — users must scroll through all records.
+</problem>
+
+<context>
+File: src/pages/UserList.jsx
+The page already fetches all users into state (users array).
+No search input or filter logic exists yet.
+</context>
+
+<requirements>
+1. Add a search input above the user table
+2. Filter the existing users array in real time by name and email (client-side, no new API call)
+3. Show "No results" when the filter matches nothing
+4. Clear button resets the filter
+</requirements>
+
+<technical_details>
+Modify UserList.jsx only. Add a useState for the search query.
+Derive filteredUsers = users.filter(...) from state — do not add a useEffect.
+Follow existing Tailwind class patterns in the file.
+</technical_details>
+
+<acceptance_criteria>
+- Typing in search input immediately filters the visible rows
+- Filtering by partial name or email works
+- Clearing the input restores all users
+</acceptance_criteria>
+```
 
 ## Key Behavior
 
@@ -94,3 +234,4 @@ Write:
 - **Be specific** — always include file paths and names found in the codebase
 - **Stay scoped** — only explore files relevant to the description
 - **One output** — either a rewrite or questions, never both
+- **XML always** — all rewrites must use the XML tag structure above; plain prose is not acceptable

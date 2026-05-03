@@ -7,16 +7,71 @@ import { readdir, readFile, writeFile, mkdir, rm, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import crypto from 'crypto'
+import QRCode from 'qrcode'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // server.js lives in ui/, workspace is the parent
 const WORKSPACE = path.resolve(__dirname, '..')
+
+// ─── remote control (cloudflare tunnel + cookie pairing) ───────────────────
+
+const CLOUDFLARED_BIN = path.join(__dirname, 'node_modules/cloudflared/bin/cloudflared')
+
+let remoteSession = {
+  active: false,
+  token: null,         // one-time pairing token in QR URL
+  sessionId: null,     // cookie value for paired device
+  pairedAt: null,
+  tunnelUrl: null,
+  tunnelProc: null,    // cloudflared child process
+}
+
+function parseCookies(cookieHeader) {
+  const cookies = {}
+  if (!cookieHeader) return cookies
+  cookieHeader.split(';').forEach(c => {
+    const [k, ...v] = c.trim().split('=')
+    if (k) cookies[k] = v.join('=')
+  })
+  return cookies
+}
 
 const app = express()
 const server = createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 app.use(express.json())
+
+// Remote access gate — cookie-based (works through tunnels)
+app.use((req, res, next) => {
+  const clientIp = req.ip || req.socket.remoteAddress
+  const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(clientIp)
+  if (isLocal) return next()
+
+  if (!remoteSession.active) return res.status(403).send('Remote access not enabled')
+
+  // First connection with pairing token → set session cookie
+  const pairToken = req.query.pair
+  if (pairToken) {
+    if (pairToken !== remoteSession.token) return res.status(403).send('Invalid pairing token')
+    if (remoteSession.sessionId) return res.status(403).send('Another device already paired')
+    // Pair this device
+    const sid = crypto.randomUUID()
+    remoteSession.sessionId = sid
+    remoteSession.pairedAt = Date.now()
+    res.cookie('remote_sid', sid, { httpOnly: true, sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 })
+    // Redirect to remove ?pair= from URL
+    const clean = req.originalUrl.replace(/[?&]pair=[^&]+/, '').replace(/^\?$/, '') || '/'
+    return res.redirect(clean)
+  }
+
+  // Check session cookie
+  const cookies = parseCookies(req.headers.cookie)
+  if (cookies.remote_sid && cookies.remote_sid === remoteSession.sessionId) return next()
+
+  return res.status(403).send('Not paired. Scan the QR code first.')
+})
 
 // Serve built frontend in production
 if (existsSync(path.join(__dirname, 'dist'))) {
@@ -47,11 +102,17 @@ function parseInputMd(content) {
     const m = content.match(new RegExp(`\\*\\*${key}:\\*\\*\\s*(.+)`))
     return m ? m[1].trim() : ''
   }
+  // Description may span multiple lines (e.g. XML-structured prompts)
+  const getDescription = () => {
+    const m = content.match(/\*\*Description:\*\*\s*([\s\S]+?)(?=\n\*\*[A-Za-z]|\n\n## |\n\n\*\*|$)/)
+    if (!m) return get('Description')
+    return m[1].trim()
+  }
   return {
     taskId: get('Task ID'),
     project: get('Project'),
     created: get('Created'),
-    description: get('Description'),
+    description: getDescription(),
     targetPath: get('Path'),
   }
 }
@@ -80,13 +141,20 @@ app.get('/api/tasks', async (req, res) => {
         const inputContent = await readIfExists(path.join(taskDir, 'input.md'))
         const meta = inputContent ? parseInputMd(inputContent) : {}
 
+        const taskPath = `tasks/${project}/${taskId}`
+        const fsStatus = deriveStatus(taskDir)
+        // Cross-reference with running workflows + queue for real-time status
+        const wf = runningWorkflows.get(taskPath)
+        const isRunning = !!(wf && wf.exitCode === null) || !!(queueRunning && queueRunning.path === taskPath)
+
         tasks.push({
           taskId,
           project,
           description: meta.description || taskId,
           created: meta.created || '',
           targetPath: meta.targetPath || '',
-          status: deriveStatus(taskDir),
+          status: fsStatus,
+          running: isRunning,
         })
       }
     }
@@ -107,6 +175,10 @@ app.get('/api/tasks/:project/:taskId', async (req, res) => {
     const inputContent = await readIfExists(path.join(taskDir, 'input.md'))
     const meta = inputContent ? parseInputMd(inputContent) : {}
 
+    const taskPath = `tasks/${project}/${taskId}`
+    const wf = runningWorkflows.get(taskPath)
+    const isRunning = !!(wf && wf.exitCode === null)
+
     res.json({
       taskId,
       project,
@@ -114,6 +186,7 @@ app.get('/api/tasks/:project/:taskId', async (req, res) => {
       created: meta.created || '',
       targetPath: meta.targetPath || '',
       status: deriveStatus(taskDir),
+      running: isRunning,
       files: {
         spec: await readIfExists(path.join(taskDir, 'SPEC.md')),
         approval: await readIfExists(path.join(taskDir, 'review/approval.md')),
@@ -210,7 +283,7 @@ app.get('/api/tasks/:project/:taskId/subtasks', async (req, res) => {
         : existsSync(path.join(subtaskDir, 'SPEC.md')) ? 'planned'
         : 'created'
       ) : null
-      const description = inputMd?.match(/\*\*Description:\*\*\s*(.+)/)?.[1]?.trim() || subtaskId
+      const description = inputMd?.match(/\*\*Description:\*\*\s*([\s\S]+?)(?=\n\*\*[A-Za-z]|\n\n## |\n\n\*\*|$)/)?.[1]?.trim() || subtaskId
       subtasks.push({ subtaskId, subtaskPath, status, subStep, description, inputMd })
     }
     subtasks.sort((a, b) => a.subtaskId.localeCompare(b.subtaskId))
@@ -1208,7 +1281,16 @@ app.post('/api/improve-prompt', async (req, res) => {
     : mode === 'fix' ? 'reporting a bug to be fixed in an existing completed task'
     : mode === 'subtask' ? 'describing a related feature or enhancement to add on top of an existing completed task'
     : 'building or fixing a feature'
-  const userMessage = `The user wants a task for ${intent}. Their description:\n"""\n${description.trim()}\n"""\n\nTarget repository: ${targetRepo.trim()}\n\nRespond ONLY with valid JSON — no markdown, no preamble:\n{"action":"rewrite","result":"rewritten prompt","explanation":"one sentence"}\nor\n{"action":"ask","result":["question 1","question 2"],"explanation":"one sentence"}`
+
+  const xmlHint = mode === 'fix'
+    ? 'Use XML tags: <problem>, <context>, <reproduction_steps>, <expected_behavior>, <technical_details>'
+    : mode === 'subtask'
+    ? 'Use XML tags: <problem>, <context>, <requirements>, <integration_points>, <acceptance_criteria>'
+    : mode === 'investigate'
+    ? 'Use XML tags: <problem>, <context>, <reproduction_steps>, <expected_behavior>, <technical_details>'
+    : 'Use XML tags: <problem>, <context>, <requirements>, <technical_details>, <acceptance_criteria>'
+
+  const userMessage = `The user wants a task for ${intent}. Their description:\n"""\n${description.trim()}\n"""\n\nTarget repository: ${targetRepo.trim()}\n\nRespond ONLY with valid JSON — no markdown, no preamble:\n{"action":"rewrite","result":"<problem>...</problem>\\n<context>...</context>\\n...","explanation":"one sentence"}\nor\n{"action":"ask","result":["question 1","question 2"],"explanation":"one sentence"}\n\nIMPORTANT: When action is "rewrite", the result MUST be structured with XML tags. ${xmlHint}. Only include tags that are relevant. Do not use plain prose — use the XML structure.`
 
   // Stream NDJSON — each line is a JSON event
   res.setHeader('Content-Type', 'application/x-ndjson')
@@ -1274,6 +1356,72 @@ app.get('/api/queue/status', (req, res) => {
   })
 })
 
+// ─── remote control API ─────────────────────────────────────────────────────
+
+app.get('/api/remote/status', (req, res) => {
+  res.json({
+    active: remoteSession.active,
+    paired: !!remoteSession.sessionId,
+    pairedAt: remoteSession.pairedAt,
+    tunnelUrl: remoteSession.tunnelUrl,
+    // Include QR so it survives page refresh
+    ...(remoteSession.active && !remoteSession.sessionId ? { qrDataUrl: remoteSession.qrDataUrl, url: remoteSession.pairUrl } : {}),
+  })
+})
+
+app.post('/api/remote/enable', async (req, res) => {
+  try {
+    // Kill existing tunnel
+    if (remoteSession.tunnelProc) {
+      remoteSession.tunnelProc.kill()
+      remoteSession.tunnelProc = null
+    }
+
+    const token = crypto.randomUUID()
+
+    // Start cloudflared quick tunnel
+    const proc = spawn(CLOUDFLARED_BIN, ['tunnel', '--url', `http://localhost:${PORT}`], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    // Parse tunnel URL from stderr output
+    const tunnelUrl = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Tunnel creation timed out')), 15000)
+      let stderr = ''
+      proc.stderr.on('data', (chunk) => {
+        stderr += chunk.toString()
+        const match = stderr.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
+        if (match) { clearTimeout(timeout); resolve(match[0]) }
+      })
+      proc.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`cloudflared exited with code ${code}`)) })
+    })
+
+    const pairUrl = `${tunnelUrl}/?pair=${token}`
+    const qrDataUrl = await QRCode.toDataURL(pairUrl, { width: 280, margin: 2 })
+
+    remoteSession = { active: true, token, sessionId: null, pairedAt: null, tunnelUrl, tunnelProc: proc, pairUrl, qrDataUrl }
+
+    proc.on('exit', () => {
+      if (remoteSession.tunnelProc === proc) {
+        remoteSession = { active: false, token: null, sessionId: null, pairedAt: null, tunnelUrl: null, tunnelProc: null, pairUrl: null, qrDataUrl: null }
+        console.log('[Remote] Tunnel closed')
+      }
+    })
+
+    console.log(`[Remote] Tunnel open → ${tunnelUrl}`)
+    res.json({ url: pairUrl, qrDataUrl, tunnelUrl })
+  } catch (err) {
+    if (remoteSession.tunnelProc) { remoteSession.tunnelProc.kill(); remoteSession.tunnelProc = null }
+    res.status(500).json({ error: `Failed to create tunnel: ${err.message}` })
+  }
+})
+
+app.post('/api/remote/disable', (req, res) => {
+  if (remoteSession.tunnelProc) { remoteSession.tunnelProc.kill(); remoteSession.tunnelProc = null }
+  remoteSession = { active: false, token: null, sessionId: null, pairedAt: null, tunnelUrl: null, tunnelProc: null }
+  res.json({ ok: true })
+})
+
 // Catch-all for React SPA (production)
 app.get('*', (req, res) => {
   const indexPath = path.join(__dirname, 'dist/index.html')
@@ -1286,13 +1434,24 @@ app.get('*', (req, res) => {
 
 // ─── websocket ───────────────────────────────────────────────────────────────
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // Remote access gate for WebSocket (cookie-based)
+  const clientIp = req.socket.remoteAddress
+  const isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(clientIp)
+  if (!isLocal) {
+    const cookies = parseCookies(req.headers.cookie)
+    if (!remoteSession.active || !cookies.remote_sid || cookies.remote_sid !== remoteSession.sessionId) {
+      ws.close(4003, 'Not authorized')
+      return
+    }
+  }
+
   const safeSend = (data) => {
     if (ws.readyState === 1) ws.send(JSON.stringify(data))
   }
 
   // Store on ws object so queue cron broadcast can find subscribers
-  ws.ws.subscribedTask = null
+  ws.subscribedTask = null
 
   ws.on('message', async (raw) => {
     let msg
@@ -1923,7 +2082,7 @@ setInterval(queueTick, 5000)
 
 
 const PORT = process.env.PORT || 3001
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Agent Coding UI → http://localhost:${PORT}`)
   console.log(`Workspace: ${WORKSPACE}`)
   console.log(`Queue cron: polling every 5s`)
