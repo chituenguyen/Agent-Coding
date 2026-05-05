@@ -151,10 +151,16 @@ export default function Terminal({ taskPath, command, autoStart = false, onDone,
   }, [taskPath, command, connectLive])
 
   const stop = useCallback(() => {
+    // Try WS first (works when subscribed), REST as reliable fallback
     if (wsRef.current) {
       wsRef.current.send(JSON.stringify({ action: 'stop' }))
     }
-  }, [])
+    if (taskPath) {
+      fetch(`/api/workflows/${encodeURIComponent(taskPath)}/stop`, { method: 'POST' })
+        .then(() => { setRunning(false); addLine('\n■ Stopped by user', true) })
+        .catch(() => {})
+    }
+  }, [taskPath])
 
   const clear = useCallback(() => {
     setLines([])

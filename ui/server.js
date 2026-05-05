@@ -603,11 +603,59 @@ app.delete('/api/catalog/:name', async (req, res) => {
 
 // ─── repositories (per-project MCP management) ─────────────────────────────
 
-const projectMcpPath = (project) => path.join(WORKSPACE, 'projects', project, 'mcp.json')
-
 async function readProjectMcpConfig(project) {
-  try { return JSON.parse(await readFile(projectMcpPath(project), 'utf8')) }
+  const data = await readMcpServer()
+  const repo = (data.repositories || []).find(r => r.name === project)
+  if (repo) return { mcpServers: repo.mcpServers || {} }
+  // fallback: read legacy projects/<name>/mcp.json
+  try { return JSON.parse(await readFile(path.join(WORKSPACE, 'projects', project, 'mcp.json'), 'utf8')) }
   catch { return { mcpServers: {} } }
+}
+
+async function writeProjectMcpConfig(project, mcpServers) {
+  const data = await readMcpServer()
+  const repo = (data.repositories || []).find(r => r.name === project)
+  if (repo) {
+    repo.mcpServers = mcpServers
+    await writeMcpServer(data)
+    // sync .mcp.json for the workspace repo so Claude Code picks up changes
+    if (repo.path === WORKSPACE) {
+      const dotMcp = { mcpServers: Object.fromEntries(Object.entries(mcpServers).map(([k, v]) => {
+        const { type, ...rest } = v
+        return [k, rest]
+      })) }
+      await writeFile(path.join(WORKSPACE, '.mcp.json'), JSON.stringify(dotMcp, null, 2) + '\n')
+    }
+    // sync projects/{name}/mcp.json so claude CLI --mcp-config still works for workflows
+    const legacyPath = path.join(WORKSPACE, 'projects', project, 'mcp.json')
+    if (existsSync(path.dirname(legacyPath))) {
+      await writeFile(legacyPath, JSON.stringify({ mcpServers }, null, 2) + '\n')
+    }
+  }
+}
+
+async function migrateProjectMcpFiles() {
+  const data = await readMcpServer()
+  let changed = false
+  for (const repo of data.repositories || []) {
+    if (repo.mcpServers) continue
+    // workspace repo: read from .mcp.json
+    if (repo.path === WORKSPACE) {
+      try {
+        const dotMcp = JSON.parse(await readFile(path.join(WORKSPACE, '.mcp.json'), 'utf8'))
+        repo.mcpServers = Object.fromEntries(Object.entries(dotMcp.mcpServers || {}).map(([k, v]) => [k, { type: 'stdio', ...v }]))
+        changed = true
+      } catch { repo.mcpServers = {} }
+    } else {
+      const legacyPath = path.join(WORKSPACE, 'projects', repo.name, 'mcp.json')
+      try {
+        const legacy = JSON.parse(await readFile(legacyPath, 'utf8'))
+        repo.mcpServers = legacy.mcpServers || {}
+        changed = true
+      } catch { repo.mcpServers = {} }
+    }
+  }
+  if (changed) await writeMcpServer(data)
 }
 
 async function getRepos() {
@@ -747,9 +795,7 @@ app.put('/api/repositories/:project/mcp/:serverName', async (req, res) => {
     const { project, serverName } = req.params
     const config = await readProjectMcpConfig(project)
     config.mcpServers[serverName] = req.body
-    const p = projectMcpPath(project)
-    await mkdir(path.dirname(p), { recursive: true })
-    await writeFile(p, JSON.stringify(config, null, 2) + '\n')
+    await writeProjectMcpConfig(project, config.mcpServers)
     res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -761,7 +807,7 @@ app.delete('/api/repositories/:project/mcp/:serverName', async (req, res) => {
     const { project, serverName } = req.params
     const config = await readProjectMcpConfig(project)
     delete config.mcpServers[serverName]
-    await writeFile(projectMcpPath(project), JSON.stringify(config, null, 2) + '\n')
+    await writeProjectMcpConfig(project, config.mcpServers)
     res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -1349,6 +1395,30 @@ app.get('/api/workflows/:taskPath(*)', (req, res) => {
   })
 })
 
+// REST stop — kills workflow regardless of WS subscription state
+app.post('/api/workflows/:taskPath(*)/stop', (req, res) => {
+  const taskPath = req.params.taskPath
+  const wf = runningWorkflows.get(taskPath)
+  if (!wf || wf.exitCode !== null) {
+    // also try queue cancel if it matches
+    if (queueRunning && queueRunning.path === taskPath) {
+      queueRunning.proc.kill('SIGTERM')
+      return res.json({ ok: true })
+    }
+    return res.status(404).json({ error: 'Not running' })
+  }
+  wf.proc.kill('SIGINT')
+  wf.exitCode = -1
+  runningWorkflows.delete(taskPath)
+  // notify any WS subscribers
+  wss.clients.forEach(client => {
+    if (client.readyState === 1 && client.subscribedTask === taskPath) {
+      client.send(JSON.stringify({ type: 'stopped' }))
+    }
+  })
+  res.json({ ok: true })
+})
+
 // Expose queue runner status
 app.get('/api/queue/status', (req, res) => {
   res.json({
@@ -1487,7 +1557,7 @@ wss.on('connection', (ws, req) => {
 
       // Auto-pass per-project MCP config if it exists
       const projectName = taskPath.split('/')[1] // tasks/{project}/{taskId}
-      const projMcpFile = projectMcpPath(projectName)
+      const projMcpFile = path.join(WORKSPACE, 'projects', projectName, 'mcp.json')
       if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
 
       const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -1600,7 +1670,7 @@ wss.on('connection', (ws, req) => {
       if (targetDir) args.push('--add-dir', targetDir)
 
       const projectName = taskPath.split('/')[1]
-      const projMcpFile = projectMcpPath(projectName)
+      const projMcpFile = path.join(WORKSPACE, 'projects', projectName, 'mcp.json')
       if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
 
       const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -1716,7 +1786,7 @@ wss.on('connection', (ws, req) => {
       if (targetDir) args.push('--add-dir', targetDir)
 
       const projectName = taskPath.split('/')[1]
-      const projMcpFile = projectMcpPath(projectName)
+      const projMcpFile = path.join(WORKSPACE, 'projects', projectName, 'mcp.json')
       if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
 
       const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -1962,7 +2032,7 @@ async function queueTick() {
 
   const projectName = (pending.task_path || taskPath || '').split('/')[1]
   if (projectName) {
-    const projMcpFile = projectMcpPath(projectName)
+    const projMcpFile = path.join(WORKSPACE, 'projects', projectName, 'mcp.json')
     if (existsSync(projMcpFile)) args.push('--mcp-config', projMcpFile)
   }
 
@@ -2082,6 +2152,7 @@ setInterval(queueTick, 5000)
 
 
 const PORT = process.env.PORT || 3001
+migrateProjectMcpFiles().catch(() => {})
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Agent Coding UI → http://localhost:${PORT}`)
   console.log(`Workspace: ${WORKSPACE}`)

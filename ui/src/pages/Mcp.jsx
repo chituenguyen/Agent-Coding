@@ -57,6 +57,9 @@ export default function Mcp() {
   const [addRepoModal, setAddRepoModal] = useState(false)
   const [addRepoForm, setAddRepoForm] = useState({ path: '', name: '' })
   const [addRepoSaving, setAddRepoSaving] = useState(false)
+  const [catalogModal, setCatalogModal] = useState(false)
+  const [catalogForm, setCatalogForm] = useState({ name: '', label: '', icon: '🔌', category: '', description: '', command: '', args: '', env: [{ k: '', v: '' }] })
+  const [catalogSaving, setCatalogSaving] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -146,6 +149,29 @@ export default function Mcp() {
     catch (err) { alert('Failed to remove: ' + err.message) }
   }
 
+  // ─── Catalog handlers ───
+  async function handleAddCatalog() {
+    if (!catalogForm.name.trim() || !catalogForm.command.trim()) return
+    setCatalogSaving(true)
+    try {
+      const args = catalogForm.args.trim() ? catalogForm.args.trim().split(/\s+/) : []
+      const env = Object.fromEntries(catalogForm.env.filter(e => e.k).map(e => [e.k, e.v]))
+      const item = {
+        name: catalogForm.name.trim(),
+        label: catalogForm.label.trim() || catalogForm.name.trim(),
+        icon: catalogForm.icon || '🔌',
+        category: catalogForm.category.trim() || 'Other',
+        description: catalogForm.description.trim(),
+        config: { type: 'stdio', command: catalogForm.command.trim(), ...(args.length ? { args } : {}), ...(Object.keys(env).length ? { env } : {}) },
+      }
+      await api.upsertCatalog(item)
+      await load()
+      setCatalogModal(false)
+      setCatalogForm({ name: '', label: '', icon: '🔌', category: '', description: '', command: '', args: '', env: [{ k: '', v: '' }] })
+    } catch (err) { alert('Failed to save: ' + err.message) }
+    finally { setCatalogSaving(false) }
+  }
+
   // ─── Repo MCP handlers ───
   async function toggleRepo(name) {
     if (expandedRepo === name) { setExpandedRepo(null); return }
@@ -196,14 +222,6 @@ export default function Mcp() {
             Manage Model Context Protocol servers — workspace, global, and per-repository
           </p>
         </div>
-        {activeTab === TAB.GLOBAL && (
-          <button onClick={() => openAdd()} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Server
-          </button>
-        )}
         {activeTab === TAB.REPOS && (
           <button onClick={() => { setAddRepoForm({ path: '', name: '' }); setAddRepoModal(true) }}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
@@ -211,6 +229,15 @@ export default function Mcp() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             Add Repository
+          </button>
+        )}
+        {activeTab === TAB.CATALOG && (
+          <button onClick={() => setCatalogModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add to Catalog
           </button>
         )}
       </div>
@@ -370,6 +397,64 @@ export default function Mcp() {
           </>
         )
       ) : null}
+
+      {/* Add to Catalog Modal */}
+      {catalogModal && (
+        <Modal title="Add to Catalog" onClose={() => setCatalogModal(false)}
+          footer={<>
+            <button onClick={() => setCatalogModal(false)} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">Cancel</button>
+            <button onClick={handleAddCatalog} disabled={catalogSaving || !catalogForm.name.trim() || !catalogForm.command.trim()}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              {catalogSaving ? 'Saving...' : 'Add to Catalog'}
+            </button>
+          </>}>
+          <div className="space-y-4">
+            <div className="flex gap-3">
+              <div className="w-20">
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Icon</label>
+                <input value={catalogForm.icon} onChange={e => setCatalogForm(f => ({ ...f, icon: e.target.value }))} placeholder="🔌"
+                  className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Name <span className="font-normal text-gray-400">(unique ID)</span></label>
+                <input value={catalogForm.name} onChange={e => setCatalogForm(f => ({ ...f, name: e.target.value }))} placeholder="my-server"
+                  className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Label <span className="font-normal text-gray-400">(display)</span></label>
+                <input value={catalogForm.label} onChange={e => setCatalogForm(f => ({ ...f, label: e.target.value }))} placeholder="My Server"
+                  className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Category</label>
+                <input value={catalogForm.category} onChange={e => setCatalogForm(f => ({ ...f, category: e.target.value }))} placeholder="Storage, Web, Services..."
+                  className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Description</label>
+              <input value={catalogForm.description} onChange={e => setCatalogForm(f => ({ ...f, description: e.target.value }))} placeholder="What this MCP server does"
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Command</label>
+              <input value={catalogForm.command} onChange={e => setCatalogForm(f => ({ ...f, command: e.target.value }))} placeholder="npx or /path/to/uvx"
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">Args <span className="font-normal text-gray-400">(space-separated)</span></label>
+              <input value={catalogForm.args} onChange={e => setCatalogForm(f => ({ ...f, args: e.target.value }))} placeholder="-y @modelcontextprotocol/server-name"
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2">Environment Variables <span className="font-normal text-gray-400">(optional)</span></label>
+              <KVEditor rows={catalogForm.env} onChange={env => setCatalogForm(f => ({ ...f, env }))} keyPlaceholder="API_KEY" valPlaceholder="value" />
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Graph overlay */}
       {graphProject && <RepoGraph project={graphProject} onClose={() => setGraphProject(null)} />}
