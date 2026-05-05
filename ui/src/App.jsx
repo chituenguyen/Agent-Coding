@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
 import Queue from './pages/Queue'
+import Chat from './pages/Chat'
 import Investigate from './pages/Investigate'
 import Agents from './pages/Agents'
 import Commands from './pages/Commands'
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/tasks/:project/:taskId" element={<TaskDetail />} />
           <Route path="/queue" element={<Queue />} />
+          <Route path="/chat" element={<Chat />} />
           <Route path="/investigate" element={<Investigate />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/commands" element={<Commands />} />

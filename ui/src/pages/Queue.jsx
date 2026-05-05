@@ -15,8 +15,22 @@ export default function Queue() {
   const [queue, setQueue] = useState({ tasks: [] })
   const [loading, setLoading] = useState(true)
   const [showClearMenu, setShowClearMenu] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('queue-collapsed') || '[]')) }
+    catch { return new Set() }
+  })
   const pollRef = useRef(null)
   const navigate = useNavigate()
+
+  function toggleCollapse(key) {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      try { localStorage.setItem('queue-collapsed', JSON.stringify([...next])) } catch {}
+      return next
+    })
+  }
+  const isCollapsed = (key) => collapsed.has(key)
 
   async function load() {
     try {
@@ -229,34 +243,47 @@ export default function Queue() {
                   Pending ({pending.length})
                 </h2>
                 <div className="space-y-4">
-                  {pendingProjects.map(proj => (
-                    <div key={proj}>
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <svg className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                        </svg>
-                        <span className="text-xs font-medium text-gray-600 dark:text-gray-300 uppercase tracking-wider">{proj}</span>
-                        <span className="text-xs text-gray-400 dark:text-gray-500">{pendingByProject[proj].length}</span>
+                  {pendingProjects.map(proj => {
+                    const key = `pending:${proj}`
+                    const open = !isCollapsed(key)
+                    return (
+                      <div key={proj}>
+                        <button
+                          type="button"
+                          onClick={() => toggleCollapse(key)}
+                          className="w-full flex items-center gap-2 mb-1.5 hover:text-gray-900 dark:hover:text-white text-gray-500 dark:text-gray-400 transition-colors group"
+                        >
+                          <svg className={`w-3 h-3 transition-transform shrink-0 ${open ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                          </svg>
+                          <span className="text-xs font-medium uppercase tracking-wider">{proj}</span>
+                          <span className="text-xs text-gray-400 dark:text-gray-500">{pendingByProject[proj].length}</span>
+                        </button>
+                        {open && (
+                          <div className="space-y-1.5">
+                            {pendingByProject[proj].map((task) => {
+                              const pi = pending.indexOf(task)
+                              return (
+                                <QueueRow key={'p' + pi} task={task} onNavigate={() => navTo(task)}
+                                  showReorder
+                                  isFirst={pi === 0}
+                                  isLast={pi === pending.length - 1}
+                                  onMoveUp={() => handleMove(task._idx, 'up')}
+                                  onMoveDown={() => handleMove(task._idx, 'down')}
+                                  position={pi + 1}
+                                  showActions
+                                  onRemove={() => handleRemove(task._idx)}
+                                />
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
-                      <div className="space-y-1.5">
-                        {pendingByProject[proj].map((task) => {
-                          const pi = pending.indexOf(task)
-                          return (
-                            <QueueRow key={'p' + pi} task={task} onNavigate={() => navTo(task)}
-                              showReorder
-                              isFirst={pi === 0}
-                              isLast={pi === pending.length - 1}
-                              onMoveUp={() => handleMove(task._idx, 'up')}
-                              onMoveDown={() => handleMove(task._idx, 'down')}
-                              position={pi + 1}
-                              showActions
-                              onRemove={() => handleRemove(task._idx)}
-                            />
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )
@@ -269,29 +296,42 @@ export default function Queue() {
                 Completed ({completed.length})
               </h2>
               <div className="space-y-4">
-                {projectNames.map(proj => (
-                  <div key={proj}>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <svg className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                      </svg>
-                      <span className="text-xs font-medium text-gray-600 dark:text-gray-300 uppercase tracking-wider">{proj}</span>
-                      <span className="text-xs text-gray-400 dark:text-gray-500">{completedByProject[proj].length}</span>
+                {projectNames.map(proj => {
+                  const key = `completed:${proj}`
+                  const open = !isCollapsed(key)
+                  return (
+                    <div key={proj}>
+                      <button
+                        type="button"
+                        onClick={() => toggleCollapse(key)}
+                        className="w-full flex items-center gap-2 mb-1.5 hover:text-gray-900 dark:hover:text-white text-gray-500 dark:text-gray-400 transition-colors group"
+                      >
+                        <svg className={`w-3 h-3 transition-transform shrink-0 ${open ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        <span className="text-xs font-medium uppercase tracking-wider">{proj}</span>
+                        <span className="text-xs text-gray-400 dark:text-gray-500">{completedByProject[proj].length}</span>
+                      </button>
+                      {open && (
+                        <div className="space-y-1.5">
+                          {completedByProject[proj].map((task, i) => {
+                            const qIdx = tasks.indexOf(task)
+                            return (
+                              <QueueRow key={`${proj}-${i}`} task={task} onNavigate={() => navTo(task)}
+                                showActions={task.status === 'failed'}
+                                onRetry={() => handleRetry(qIdx)}
+                                onRemove={() => handleRemove(qIdx)}
+                              />
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
-                    <div className="space-y-1.5">
-                      {completedByProject[proj].map((task, i) => {
-                        const qIdx = tasks.indexOf(task)
-                        return (
-                          <QueueRow key={`${proj}-${i}`} task={task} onNavigate={() => navTo(task)}
-                            showActions={task.status === 'failed'}
-                            onRetry={() => handleRetry(qIdx)}
-                            onRemove={() => handleRemove(qIdx)}
-                          />
-                        )
-                      })}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}

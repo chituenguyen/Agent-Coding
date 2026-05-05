@@ -92,4 +92,15 @@ export const api = {
   getRemoteStatus: () => req('GET', '/remote/status'),
   enableRemote: () => req('POST', '/remote/enable'),
   disableRemote: () => req('POST', '/remote/disable'),
+
+  // Account
+  getAccount: () => req('GET', '/account'),
+
+  // Chat
+  getChats: (kind) => req('GET', `/chats${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
+  createChat: (data) => req('POST', '/chats', data || {}),
+  getChat: (id) => req('GET', `/chats/${id}`),
+  renameChat: (id, title) => req('PATCH', `/chats/${id}`, { title }),
+  updateChat: (id, patch) => req('PATCH', `/chats/${id}`, patch),
+  deleteChat: (id) => req('DELETE', `/chats/${id}`),
 }

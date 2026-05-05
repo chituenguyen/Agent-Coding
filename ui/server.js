@@ -1422,6 +1422,111 @@ app.post('/api/remote/disable', (req, res) => {
   res.json({ ok: true })
 })
 
+// ─── account ────────────────────────────────────────────────────────────────
+app.get('/api/account', async (req, res) => {
+  try {
+    const raw = await readFile(GLOBAL_CLAUDE_JSON, 'utf8')
+    const data = JSON.parse(raw)
+    const o = data.oauthAccount || {}
+    res.json({
+      email: o.emailAddress || null,
+      organizationName: o.organizationName || null,
+      organizationRole: o.organizationRole || null,
+      workspaceName: o.workspaceName || null,
+      userID: data.userID || null,
+      claudeVersion: data.firstStartTime ? new Date(data.firstStartTime).toISOString().slice(0, 10) : null,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── chat ────────────────────────────────────────────────────────────────────
+const chatsDir = () => path.join(WORKSPACE, 'chats')
+const chatPath = (id) => path.join(chatsDir(), `${id}.json`)
+
+async function ensureChatsDir() {
+  if (!existsSync(chatsDir())) await mkdir(chatsDir(), { recursive: true })
+}
+
+async function readChat(id) {
+  try { return JSON.parse(await readFile(chatPath(id), 'utf8')) }
+  catch { return null }
+}
+
+async function writeChat(chat) {
+  await ensureChatsDir()
+  await writeFile(chatPath(chat.id), JSON.stringify(chat, null, 2))
+}
+
+app.get('/api/chats', async (req, res) => {
+  try {
+    await ensureChatsDir()
+    const files = await readdir(chatsDir())
+    const wantKind = req.query.kind || 'chat'
+    const chats = await Promise.all(
+      files.filter(f => f.endsWith('.json')).map(async (f) => {
+        try {
+          const c = JSON.parse(await readFile(path.join(chatsDir(), f), 'utf8'))
+          const kind = c.kind || 'chat'
+          if (kind !== wantKind) return null
+          return { id: c.id, title: c.title, kind, agent: c.agent || null, createdAt: c.createdAt, updatedAt: c.updatedAt, messageCount: (c.messages || []).length }
+        } catch { return null }
+      })
+    )
+    res.json(chats.filter(Boolean).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')))
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/chats', async (req, res) => {
+  try {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
+    const kind = req.body?.kind === 'investigate' ? 'investigate' : 'chat'
+    const agent = typeof req.body?.agent === 'string' && req.body.agent.trim() ? req.body.agent.trim() : null
+    const title = kind === 'investigate' ? 'New investigation' : 'New chat'
+    const chat = {
+      id, title, kind, agent,
+      sessionId: null, model: 'sonnet', folderPaths: [WORKSPACE],
+      createdAt: now, updatedAt: now, messages: [],
+    }
+    await writeChat(chat)
+    res.json(chat)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/chats/:id', async (req, res) => {
+  const chat = await readChat(req.params.id)
+  if (!chat) return res.status(404).json({ error: 'Not found' })
+  res.json(chat)
+})
+
+app.patch('/api/chats/:id', async (req, res) => {
+  const chat = await readChat(req.params.id)
+  if (!chat) return res.status(404).json({ error: 'Not found' })
+  if (typeof req.body.title === 'string') chat.title = req.body.title.trim().slice(0, 200) || chat.title
+  if (typeof req.body.model === 'string' && ['sonnet', 'opus', 'haiku'].includes(req.body.model)) chat.model = req.body.model
+  if (Array.isArray(req.body.folderPaths)) {
+    chat.folderPaths = req.body.folderPaths.filter(p => typeof p === 'string' && p.trim()).slice(0, 10)
+  }
+  chat.updatedAt = new Date().toISOString()
+  await writeChat(chat)
+  res.json(chat)
+})
+
+app.delete('/api/chats/:id', async (req, res) => {
+  try {
+    if (existsSync(chatPath(req.params.id))) await rm(chatPath(req.params.id))
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Catch-all for React SPA (production)
 app.get('*', (req, res) => {
   const indexPath = path.join(__dirname, 'dist/index.html')
@@ -1880,11 +1985,125 @@ wss.on('connection', (ws, req) => {
         }
       }
     }
+
+    if (msg.action === 'chat-send') {
+      const { chatId, message } = msg
+      if (!chatId || !message?.trim()) {
+        safeSend({ type: 'chat-error', error: 'chatId and message required' })
+        return
+      }
+
+      const chat = await readChat(chatId)
+      if (!chat) {
+        safeSend({ type: 'chat-error', error: 'Chat not found' })
+        return
+      }
+
+      // Persist user message immediately
+      const now = new Date().toISOString()
+      chat.messages.push({ role: 'user', content: message, timestamp: now })
+      chat.updatedAt = now
+      if (chat.messages.length === 1 || !chat.title || chat.title === 'New chat') {
+        chat.title = message.split('\n')[0].slice(0, 80)
+      }
+      await writeChat(chat)
+      safeSend({ type: 'chat-user-saved', chat })
+
+      const args = ['-p', message, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+      if (chat.sessionId) {
+        args.push('--resume', chat.sessionId)
+      } else {
+        chat.sessionId = crypto.randomUUID()
+        args.push('--session-id', chat.sessionId)
+      }
+
+      if (chat.model && ['sonnet', 'opus', 'haiku'].includes(chat.model)) {
+        args.push('--model', chat.model)
+      }
+
+      // Investigations and other dedicated-agent chats route every turn through
+      // the chosen sub-agent so the conversation stays focused on its persona.
+      if (chat.agent && /^[\w-]+$/.test(chat.agent)) {
+        args.push('--agent', chat.agent)
+      }
+
+      // Folder mentions: keep cwd=WORKSPACE so --resume keeps finding the session,
+      // expose mentioned folders via --add-dir so Claude can read/write inside them.
+      const folderPaths = (chat.folderPaths || []).filter(p => p && p !== WORKSPACE && existsSync(p))
+      for (const extra of folderPaths) args.push('--add-dir', extra)
+
+      const proc = spawn('claude', args, { cwd: WORKSPACE, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+      ws.activeChatProc = proc
+      ws.activeChatId = chatId
+
+      let assistantText = ''
+      let stdoutBuf = ''
+      proc.stdout.on('data', (chunk) => {
+        stdoutBuf += chunk.toString()
+        const lines = stdoutBuf.split('\n')
+        stdoutBuf = lines.pop()
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const event = JSON.parse(line)
+            // Only trust session_id from init/assistant — error results return a throwaway id
+            if (event.session_id && (event.type === 'system' || event.type === 'assistant')) {
+              chat.sessionId = event.session_id
+            }
+
+            if (event.type === 'assistant' && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === 'text' && block.text) {
+                  assistantText += block.text
+                  safeSend({ type: 'chat-delta', text: block.text })
+                } else if (block.type === 'tool_use') {
+                  // Notify the UI but do NOT pollute the saved message text
+                  safeSend({ type: 'chat-tool', name: block.name, input: block.input || {} })
+                }
+              }
+            }
+            // tool_result events are intentionally not forwarded — they are noisy
+            // raw payloads. The UI only needs to know "Claude is working", not what
+            // each tool returned internally.
+          } catch {
+            // not JSON, ignore
+          }
+        }
+      })
+
+      proc.stderr.on('data', (chunk) => {
+        safeSend({ type: 'chat-stderr', data: chunk.toString() })
+      })
+
+      proc.on('close', async (code) => {
+        if (assistantText) {
+          chat.messages.push({ role: 'assistant', content: assistantText, timestamp: new Date().toISOString() })
+        }
+        chat.updatedAt = new Date().toISOString()
+        await writeChat(chat)
+        safeSend({ type: 'chat-done', code, chat })
+        if (ws.activeChatProc === proc) {
+          ws.activeChatProc = null
+          ws.activeChatId = null
+        }
+      })
+    }
+
+    if (msg.action === 'chat-stop') {
+      if (ws.activeChatProc) {
+        ws.activeChatProc.kill('SIGINT')
+        safeSend({ type: 'chat-stopped' })
+      }
+    }
   })
 
   // WebSocket close: do NOT kill the process — let it run in background
   ws.on('close', () => {
     ws.subscribedTask = null
+    if (ws.activeChatProc) {
+      try { ws.activeChatProc.kill('SIGINT') } catch {}
+      ws.activeChatProc = null
+    }
   })
 })
 

@@ -54,8 +54,38 @@ function formToSettings(f) {
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
+function ProfileCard({ account }) {
+  if (!account) return null
+  const initial = (account.email || '?')[0].toUpperCase()
+  return (
+    <div className="mb-6 p-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl flex items-center gap-4">
+      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-lg font-semibold shrink-0">
+        {initial}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+          {account.email || 'Not signed in'}
+        </div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+          {account.organizationName || '—'}
+          {account.organizationRole && (
+            <span className="ml-2 px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded text-[10px] uppercase font-medium tracking-wide">
+              {account.organizationRole}
+            </span>
+          )}
+        </div>
+      </div>
+      <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 text-xs rounded-md font-medium">
+        <span className="w-1.5 h-1.5 bg-green-500 rounded-full" />
+        Signed in
+      </span>
+    </div>
+  )
+}
+
 export default function Settings() {
   const [form, setForm] = useState(null)
+  const [account, setAccount] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -66,6 +96,7 @@ export default function Settings() {
       .then(s => setForm(settingsToForm(s)))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
+    api.getAccount().then(setAccount).catch(() => {})
   }, [])
 
   function patch(updates) {
@@ -145,6 +176,8 @@ export default function Settings() {
       {error && (
         <div className="mb-6 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">{error}</div>
       )}
+
+      <ProfileCard account={account} />
 
       <div className="space-y-6">
 
