@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../api'
 
 const ROLE_STYLES = {
-  user: 'bg-indigo-600 text-white',
-  assistant: 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100',
+  user: 'bg-indigo-600 text-white shadow-md shadow-indigo-200/40 dark:shadow-none',
+  assistant: 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm',
 }
 
 const MODELS = [
@@ -37,56 +37,82 @@ function friendlyToolLabel(name, input = {}) {
   return name
 }
 
-function MentionPopup({ agents, repos, query, onPickAgent, onPickFolder }) {
-  const q = query.toLowerCase()
-  const matchedAgents = agents.filter(a => (a.name || a.filename || '').toLowerCase().includes(q))
-  const matchedRepos = repos.filter(r => r.name.toLowerCase().includes(q))
-  if (matchedAgents.length === 0 && matchedRepos.length === 0) return null
+function MentionRow({ item, selected, onPick, onHover, scrollRef }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+  const isFolder = item.kind === 'folder'
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onMouseEnter={onHover}
+      onClick={onPick}
+      className={`w-full text-left px-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0 flex items-center gap-2 transition-colors ${
+        selected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+      }`}
+    >
+      <span className="text-base">{isFolder ? '📁' : '🤖'}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+          @{isFolder ? item.data.name : (item.data.name || item.data.filename)}
+        </div>
+        {isFolder ? (
+          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{item.data.repoPath}</div>
+        ) : (
+          item.data.description && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">{item.data.description}</div>
+          )
+        )}
+      </div>
+    </button>
+  )
+}
 
+function MentionPopup({ items, selectedIndex, onPick, onHover }) {
+  if (items.length === 0) return null
+  const folders = items.filter(i => i.kind === 'folder')
+  const agents = items.filter(i => i.kind === 'agent')
+  let counter = 0
   return (
     <div className="absolute z-30 bottom-full mb-2 left-0 w-96 max-h-72 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
-      {matchedRepos.length > 0 && (
+      {folders.length > 0 && (
         <>
           <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800">
             Folders
           </div>
-          {matchedRepos.map(r => (
-            <button
-              key={r.name}
-              type="button"
-              onClick={() => onPickFolder(r)}
-              className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 border-b border-gray-100 dark:border-gray-800 last:border-0 flex items-center gap-2"
-            >
-              <span className="text-base">📁</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-gray-900 dark:text-gray-100">@{r.name}</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{r.repoPath}</div>
-              </div>
-            </button>
-          ))}
+          {folders.map(item => {
+            const i = counter++
+            return (
+              <MentionRow
+                key={'f' + item.data.name}
+                item={item}
+                selected={i === selectedIndex}
+                onPick={() => onPick(item)}
+                onHover={() => onHover(i)}
+              />
+            )
+          })}
         </>
       )}
-      {matchedAgents.length > 0 && (
+      {agents.length > 0 && (
         <>
           <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800">
             Agents
           </div>
-          {matchedAgents.map(a => (
-            <button
-              key={a.filename}
-              type="button"
-              onClick={() => onPickAgent(a)}
-              className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 border-b border-gray-100 dark:border-gray-800 last:border-0 flex items-center gap-2"
-            >
-              <span className="text-base">🤖</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-gray-900 dark:text-gray-100">@{a.name || a.filename}</div>
-                {a.description && (
-                  <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">{a.description}</div>
-                )}
-              </div>
-            </button>
-          ))}
+          {agents.map(item => {
+            const i = counter++
+            return (
+              <MentionRow
+                key={'a' + (item.data.filename || item.data.name)}
+                item={item}
+                selected={i === selectedIndex}
+                onPick={() => onPick(item)}
+                onHover={() => onHover(i)}
+              />
+            )
+          })}
         </>
       )}
     </div>
@@ -108,7 +134,7 @@ function StreamingBubble({ toolEvents, streamText }) {
   const latest = toolEvents[toolEvents.length - 1]?.label
   return (
     <div className="flex justify-start mb-4">
-      <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm">
+      <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm">
         {toolEvents.length > 0 && (
           <div className="mb-2">
             <button
@@ -163,6 +189,7 @@ export default function Chat() {
   const [streamText, setStreamText] = useState('')
   const [toolEvents, setToolEvents] = useState([])
   const [mentionQuery, setMentionQuery] = useState(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
 
@@ -311,6 +338,20 @@ export default function Chat() {
     }
   }
 
+  const mentionItems = (() => {
+    if (mentionQuery === null) return []
+    const q = mentionQuery.toLowerCase()
+    const folders = repos
+      .filter(r => r.name.toLowerCase().includes(q))
+      .map(r => ({ kind: 'folder', data: r }))
+    const ags = agents
+      .filter(a => (a.name || a.filename || '').toLowerCase().includes(q))
+      .map(a => ({ kind: 'agent', data: a }))
+    return [...folders, ...ags]
+  })()
+
+  useEffect(() => { setMentionIndex(0) }, [mentionQuery])
+
   function onInputChange(e) {
     const v = e.target.value
     setInput(v)
@@ -318,6 +359,11 @@ export default function Chat() {
     const before = v.slice(0, cursor)
     const m = before.match(/@([\w-]*)$/)
     setMentionQuery(m ? m[1] : null)
+  }
+
+  function pickMentionItem(item) {
+    if (item.kind === 'folder') pickFolder(item.data)
+    else pickAgent(item.data)
   }
 
   function pickAgent(agent) {
@@ -350,12 +396,31 @@ export default function Chat() {
   }
 
   function onKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey && !mentionQuery) {
+    if (mentionQuery !== null && mentionItems.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionIndex(i => (i + 1) % mentionItems.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionIndex(i => (i - 1 + mentionItems.length) % mentionItems.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        pickMentionItem(mentionItems[mentionIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionQuery(null)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey && mentionQuery === null) {
       e.preventDefault()
       send()
-    }
-    if (e.key === 'Escape' && mentionQuery !== null) {
-      setMentionQuery(null)
     }
   }
 
@@ -368,9 +433,9 @@ export default function Chat() {
   })
 
   return (
-    <div className="h-full flex bg-white dark:bg-gray-950">
+    <div className="h-full flex bg-gray-50 dark:bg-gray-950">
       {/* Sidebar — chat list */}
-      <aside className={`${sidebarOpen ? 'w-72' : 'w-0'} transition-all overflow-hidden border-r border-gray-200 dark:border-gray-800 flex flex-col bg-gray-50 dark:bg-gray-900`}>
+      <aside className={`${sidebarOpen ? 'w-72' : 'w-0'} transition-all overflow-hidden border-r border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-900`}>
         <div className="p-3 border-b border-gray-200 dark:border-gray-800">
           <button
             onClick={newChat}
@@ -426,7 +491,7 @@ export default function Chat() {
       {/* Main chat area */}
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3">
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex items-center gap-3">
           <button
             onClick={() => setSidebarOpen(o => !o)}
             className="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -487,7 +552,7 @@ export default function Chat() {
 
         {/* Folder pills */}
         {folderPills.length > 0 && (
-          <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 flex flex-wrap items-center gap-2">
+          <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">Working in:</span>
             {folderPills.map(f => (
               <span
@@ -540,14 +605,13 @@ export default function Chat() {
           <div className="max-w-3xl mx-auto relative">
             {mentionQuery !== null && (
               <MentionPopup
-                agents={agents}
-                repos={repos}
-                query={mentionQuery}
-                onPickAgent={pickAgent}
-                onPickFolder={pickFolder}
+                items={mentionItems}
+                selectedIndex={mentionIndex}
+                onPick={pickMentionItem}
+                onHover={setMentionIndex}
               />
             )}
-            <div className="flex items-end gap-2 border border-gray-300 dark:border-gray-700 rounded-2xl px-3 py-2 bg-white dark:bg-gray-900 focus-within:border-indigo-500 dark:focus-within:border-indigo-400 transition-colors">
+            <div className="flex items-end gap-2 border border-gray-300 dark:border-gray-700 rounded-2xl px-3 py-2 bg-white dark:bg-gray-900 shadow-sm focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 dark:focus-within:ring-indigo-900/40 dark:focus-within:border-indigo-400 transition-all">
               <textarea
                 ref={inputRef}
                 value={input}

@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
 const ROLE_STYLES = {
-  user: 'bg-amber-500 text-white',
-  assistant: 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100',
+  user: 'bg-amber-500 text-white shadow-md shadow-amber-200/50 dark:shadow-none',
+  assistant: 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm',
 }
 
 const MODELS = [
@@ -37,6 +37,50 @@ function friendlyToolLabel(name, input = {}) {
   return name
 }
 
+function FolderRow({ repo, selected, onPick, onHover }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onMouseEnter={onHover}
+      onClick={onPick}
+      className={`w-full text-left px-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0 flex items-center gap-2 transition-colors ${
+        selected ? 'bg-amber-100 dark:bg-amber-900/40' : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'
+      }`}
+    >
+      <span className="text-base">📁</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">@{repo.name}</div>
+        <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{repo.repoPath}</div>
+      </div>
+    </button>
+  )
+}
+
+function FolderMentionPopup({ matched, selectedIndex, onPick, onHover }) {
+  if (matched.length === 0) return null
+  return (
+    <div className="absolute z-30 bottom-full mb-2 left-0 w-96 max-h-72 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
+      <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800">
+        Folders
+      </div>
+      {matched.map((r, i) => (
+        <FolderRow
+          key={r.name}
+          repo={r}
+          selected={i === selectedIndex}
+          onPick={() => onPick(r)}
+          onHover={() => onHover(i)}
+        />
+      ))}
+    </div>
+  )
+}
+
 function MessageBlock({ msg }) {
   return (
     <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
@@ -52,7 +96,7 @@ function StreamingBubble({ toolEvents, streamText }) {
   const latest = toolEvents[toolEvents.length - 1]?.label
   return (
     <div className="flex justify-start mb-4">
-      <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm">
+      <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm">
         {toolEvents.length > 0 && (
           <div className="mb-2">
             <button
@@ -158,10 +202,13 @@ export default function Investigate() {
   const [chats, setChats] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [activeChat, setActiveChat] = useState(null)
+  const [repos, setRepos] = useState([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [toolEvents, setToolEvents] = useState([])
+  const [mentionQuery, setMentionQuery] = useState(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [pushOpen, setPushOpen] = useState(false)
@@ -169,9 +216,13 @@ export default function Investigate() {
 
   const wsRef = useRef(null)
   const bottomRef = useRef(null)
+  const inputRef = useRef(null)
   const navigate = useNavigate()
 
-  useEffect(() => { refreshChats() }, [])
+  useEffect(() => {
+    refreshChats()
+    api.getRepositories().then(setRepos).catch(() => {})
+  }, [])
 
   async function refreshChats() {
     try {
@@ -212,6 +263,21 @@ export default function Investigate() {
     if (!activeChat) return
     setModelMenuOpen(false)
     const updated = await api.updateChat(activeChat.id, { model: modelId })
+    setActiveChat(updated)
+  }
+
+  async function addFolder(repo) {
+    if (!activeChat) return
+    const current = activeChat.folderPaths || []
+    if (current.includes(repo.repoPath)) return
+    const updated = await api.updateChat(activeChat.id, { folderPaths: [...current, repo.repoPath] })
+    setActiveChat(updated)
+  }
+
+  async function removeFolder(folderPath) {
+    if (!activeChat) return
+    const next = (activeChat.folderPaths || []).filter(p => p !== folderPath)
+    const updated = await api.updateChat(activeChat.id, { folderPaths: next })
     setActiveChat(updated)
   }
 
@@ -281,8 +347,58 @@ export default function Investigate() {
     }
   }
 
+  const matchedRepos = mentionQuery !== null
+    ? repos.filter(r => r.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+    : []
+
+  useEffect(() => { setMentionIndex(0) }, [mentionQuery])
+
+  function onInputChange(e) {
+    const v = e.target.value
+    setInput(v)
+    const cursor = e.target.selectionStart
+    const before = v.slice(0, cursor)
+    const m = before.match(/@([\w-]*)$/)
+    setMentionQuery(m ? m[1] : null)
+  }
+
+  function pickFolder(repo) {
+    addFolder(repo)
+    const cursor = inputRef.current?.selectionStart ?? input.length
+    const before = input.slice(0, cursor).replace(/@([\w-]*)$/, '')
+    const after = input.slice(cursor)
+    setInput(before + after)
+    setMentionQuery(null)
+    setTimeout(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(before.length, before.length)
+    }, 0)
+  }
+
   function onKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (mentionQuery !== null && matchedRepos.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionIndex(i => (i + 1) % matchedRepos.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionIndex(i => (i - 1 + matchedRepos.length) % matchedRepos.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        pickFolder(matchedRepos[mentionIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setMentionQuery(null)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !e.shiftKey && mentionQuery === null) {
       e.preventDefault()
       send()
     }
@@ -313,13 +429,18 @@ export default function Investigate() {
   const messages = activeChat?.messages || []
   const currentModel = activeChat?.model || 'sonnet'
   const firstUserMsg = messages.find(m => m.role === 'user')?.content || ''
-  const customFolders = (activeChat?.folderPaths || []).filter(p => !p.endsWith('/agent-coding'))
+  const folderPaths = activeChat?.folderPaths || []
+  const folderPills = folderPaths.map(p => {
+    const repo = repos.find(r => r.repoPath === p)
+    return { path: p, name: repo?.name || p.split('/').pop() }
+  })
+  const customFolders = folderPaths.filter(p => !p.endsWith('/agent-coding'))
   const defaultTarget = customFolders[0] || ''
 
   return (
-    <div className="h-full flex bg-white dark:bg-gray-950">
+    <div className="h-full flex bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'w-72' : 'w-0'} transition-all overflow-hidden border-r border-gray-200 dark:border-gray-800 flex flex-col bg-gray-50 dark:bg-gray-900`}>
+      <aside className={`${sidebarOpen ? 'w-72' : 'w-0'} transition-all overflow-hidden border-r border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-900`}>
         <div className="p-3 border-b border-gray-200 dark:border-gray-800">
           <button
             onClick={newInvestigation}
@@ -366,7 +487,7 @@ export default function Investigate() {
       {/* Main area */}
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3">
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex items-center gap-3">
           <button
             onClick={() => setSidebarOpen(o => !o)}
             className="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -442,6 +563,27 @@ export default function Investigate() {
           )}
         </div>
 
+        {/* Folder pills */}
+        {folderPills.length > 0 && (
+          <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">Working in:</span>
+            {folderPills.map(f => (
+              <span
+                key={f.path}
+                className="inline-flex items-center gap-1.5 px-2 py-1 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-xs rounded-md font-mono"
+                title={f.path}
+              >
+                📁 {f.name}
+                <button onClick={() => removeFolder(f.path)} className="hover:text-red-500" title="Remove">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6">
           {!activeId ? (
@@ -476,13 +618,22 @@ export default function Investigate() {
 
         {/* Input */}
         <div className="border-t border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-950">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-end gap-2 border border-gray-300 dark:border-gray-700 rounded-2xl px-3 py-2 bg-white dark:bg-gray-900 focus-within:border-amber-500 transition-colors">
+          <div className="max-w-3xl mx-auto relative">
+            {mentionQuery !== null && (
+              <FolderMentionPopup
+                matched={matchedRepos}
+                selectedIndex={mentionIndex}
+                onPick={pickFolder}
+                onHover={setMentionIndex}
+              />
+            )}
+            <div className="flex items-end gap-2 border border-gray-300 dark:border-gray-700 rounded-2xl px-3 py-2 bg-white dark:bg-gray-900 shadow-sm focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-100 dark:focus-within:ring-amber-900/40 transition-all">
               <textarea
+                ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={onInputChange}
                 onKeyDown={onKeyDown}
-                placeholder={activeId ? "Describe the bug or respond to the investigator..." : "Create an investigation first"}
+                placeholder={activeId ? "Describe the bug or @ for folder mention..." : "Create an investigation first"}
                 disabled={!activeId || streaming}
                 rows={1}
                 className="flex-1 resize-none bg-transparent text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none max-h-40"
@@ -507,7 +658,7 @@ export default function Investigate() {
               )}
             </div>
             <p className="text-xs text-gray-400 dark:text-gray-600 mt-1.5 px-1">
-              Enter to send · Shift+Enter for newline
+              Enter to send · Shift+Enter for newline · @ to mention a folder
             </p>
           </div>
         </div>
