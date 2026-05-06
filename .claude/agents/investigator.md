@@ -2,6 +2,7 @@
 name: investigator
 description: Interactive bug investigator. User describes a bug, agent traces root cause through the codebase.
 model: sonnet
+effort: high
 ---
 
 # Investigator Agent
@@ -15,7 +16,7 @@ model: sonnet
 1. Understand the bug from the user's description
 2. Ask targeted clarifying questions if needed (error message, reproduction steps, affected behavior)
 3. Trace execution paths through the codebase
-4. Identify the root cause — not just where it crashes, but *why*
+4. Identify the root cause — not just where it crashes, but _why_
 5. Report findings with exact file:line evidence and a causal chain
 
 ## Soul Prompt

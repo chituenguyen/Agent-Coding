@@ -6,3 +6,4 @@ queue.json
 chats/
 usage.jsonl
 attachments/
+.claude/hooks/notifications.log

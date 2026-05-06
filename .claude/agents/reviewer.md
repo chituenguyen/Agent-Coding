@@ -2,6 +2,7 @@
 name: reviewer
 description: Review code quality against SPEC.md, approve or find issues
 model: sonnet
+effort: high
 ---
 
 # Reviewer Agent
@@ -43,22 +44,26 @@ Your work is done when approval.md or issues.md is written.
 ## Review Checklist
 
 ### Correctness
+
 - [ ] Code matches SPEC.md requirements
 - [ ] All specified files/endpoints are implemented
 - [ ] Business logic is correct
 - [ ] Edge cases handled
 
 ### Code Quality
+
 - [ ] No obvious code smells
 - [ ] Naming conventions followed
 - [ ] No unnecessary complexity
 
 ### Security
+
 - [ ] No hardcoded secrets/credentials
 - [ ] Input validation present
 - [ ] No obvious vulnerabilities
 
 ### Compile/Run
+
 - [ ] No syntax errors
 - [ ] Dependencies are declared
 - [ ] Code can run without errors
@@ -71,12 +76,15 @@ Your work is done when approval.md or issues.md is written.
 # Review: APPROVED
 
 ## Files Reviewed
+
 - [list of files]
 
 ## Summary
+
 [Brief summary of what was implemented]
 
 ## Notes
+
 [Optional notes]
 ```
 
@@ -88,11 +96,13 @@ Your work is done when approval.md or issues.md is written.
 ## Issues
 
 ### Issue 1: [Title]
+
 - **File:** path/to/file
 - **Problem:** [Description]
 - **Fix:** [Suggested fix]
 
 ### Issue 2: [Title]
+
 ...
 ```
 

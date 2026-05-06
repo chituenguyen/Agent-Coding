@@ -1,48 +1,59 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { api } from '../api'
+import { useState, useEffect, useRef, useCallback } from "react";
+import { api } from "../api";
 
 const ROLE_STYLES = {
-  user: 'bg-indigo-600 text-white shadow-md shadow-indigo-200/40 dark:shadow-none',
-  assistant: 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm',
-}
+  user: "bg-indigo-600 text-white shadow-md shadow-indigo-200/40 dark:shadow-none",
+  assistant:
+    "bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm",
+};
 
 const MODELS = [
-  { id: 'sonnet', label: 'Sonnet 4.6' },
-  { id: 'opus',   label: 'Opus 4.7' },
-  { id: 'haiku',  label: 'Haiku 4.5' },
-]
+  { id: "sonnet", label: "Sonnet 4.6" },
+  { id: "opus", label: "Opus 4.7" },
+  { id: "haiku", label: "Haiku 4.5" },
+];
+
+const EFFORTS = [
+  { id: "", label: "Default" },
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "X-High" },
+  { id: "max", label: "Max" },
+];
 
 function friendlyToolLabel(name, input = {}) {
-  if (!name) return 'Working...'
-  if (name === 'Task') return `Delegating to ${input.subagent_type || 'sub-agent'}`
-  if (name === 'ToolSearch') return 'Looking up tools'
-  if (name === 'Read') {
-    const f = input.file_path || ''
-    return f ? `Reading ${f.split('/').pop()}` : 'Reading file'
+  if (!name) return "Working...";
+  if (name === "Task")
+    return `Delegating to ${input.subagent_type || "sub-agent"}`;
+  if (name === "ToolSearch") return "Looking up tools";
+  if (name === "Read") {
+    const f = input.file_path || "";
+    return f ? `Reading ${f.split("/").pop()}` : "Reading file";
   }
-  if (name === 'Write') return 'Writing file'
-  if (name === 'Edit') return 'Editing file'
-  if (name === 'Bash') return 'Running command'
-  if (name === 'Grep') return 'Searching code'
-  if (name === 'Glob') return 'Finding files'
-  if (name === 'WebFetch' || name === 'WebSearch') return 'Searching the web'
-  if (name === 'TodoWrite') return 'Updating task list'
+  if (name === "Write") return "Writing file";
+  if (name === "Edit") return "Editing file";
+  if (name === "Bash") return "Running command";
+  if (name === "Grep") return "Searching code";
+  if (name === "Glob") return "Finding files";
+  if (name === "WebFetch" || name === "WebSearch") return "Searching the web";
+  if (name === "TodoWrite") return "Updating task list";
   // MCP tools — strip prefixes for readability
-  if (name.startsWith('mcp__')) {
-    const parts = name.split('__')
-    const action = parts[parts.length - 1].replace(/_/g, ' ')
-    const server = parts[1]?.replace(/_/g, ' ')
-    return `${server}: ${action}`
+  if (name.startsWith("mcp__")) {
+    const parts = name.split("__");
+    const action = parts[parts.length - 1].replace(/_/g, " ");
+    const server = parts[1]?.replace(/_/g, " ");
+    return `${server}: ${action}`;
   }
-  return name
+  return name;
 }
 
 function MentionRow({ item, selected, onPick, onHover, scrollRef }) {
-  const ref = useRef(null)
+  const ref = useRef(null);
   useEffect(() => {
-    if (selected) ref.current?.scrollIntoView({ block: 'nearest' })
-  }, [selected])
-  const isFolder = item.kind === 'folder'
+    if (selected) ref.current?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+  const isFolder = item.kind === "folder";
   return (
     <button
       ref={ref}
@@ -50,31 +61,37 @@ function MentionRow({ item, selected, onPick, onHover, scrollRef }) {
       onMouseEnter={onHover}
       onClick={onPick}
       className={`w-full text-left px-3 py-2 border-b border-gray-100 dark:border-gray-800 last:border-0 flex items-center gap-2 transition-colors ${
-        selected ? 'bg-indigo-100 dark:bg-indigo-900/40' : 'hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+        selected
+          ? "bg-indigo-100 dark:bg-indigo-900/40"
+          : "hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
       }`}
     >
-      <span className="text-base">{isFolder ? '📁' : '🤖'}</span>
+      <span className="text-base">{isFolder ? "📁" : "🤖"}</span>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-          @{isFolder ? item.data.name : (item.data.name || item.data.filename)}
+          @{isFolder ? item.data.name : item.data.name || item.data.filename}
         </div>
         {isFolder ? (
-          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{item.data.repoPath}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+            {item.data.repoPath}
+          </div>
         ) : (
           item.data.description && (
-            <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">{item.data.description}</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
+              {item.data.description}
+            </div>
           )
         )}
       </div>
     </button>
-  )
+  );
 }
 
 function MentionPopup({ items, selectedIndex, onPick, onHover }) {
-  if (items.length === 0) return null
-  const folders = items.filter(i => i.kind === 'folder')
-  const agents = items.filter(i => i.kind === 'agent')
-  let counter = 0
+  if (items.length === 0) return null;
+  const folders = items.filter((i) => i.kind === "folder");
+  const agents = items.filter((i) => i.kind === "agent");
+  let counter = 0;
   return (
     <div className="absolute z-30 bottom-full mb-2 left-0 w-96 max-h-72 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl">
       {folders.length > 0 && (
@@ -82,17 +99,17 @@ function MentionPopup({ items, selectedIndex, onPick, onHover }) {
           <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800">
             Folders
           </div>
-          {folders.map(item => {
-            const i = counter++
+          {folders.map((item) => {
+            const i = counter++;
             return (
               <MentionRow
-                key={'f' + item.data.name}
+                key={"f" + item.data.name}
                 item={item}
                 selected={i === selectedIndex}
                 onPick={() => onPick(item)}
                 onHover={() => onHover(i)}
               />
-            )
+            );
           })}
         </>
       )}
@@ -101,56 +118,64 @@ function MentionPopup({ items, selectedIndex, onPick, onHover }) {
           <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800">
             Agents
           </div>
-          {agents.map(item => {
-            const i = counter++
+          {agents.map((item) => {
+            const i = counter++;
             return (
               <MentionRow
-                key={'a' + (item.data.filename || item.data.name)}
+                key={"a" + (item.data.filename || item.data.name)}
                 item={item}
                 selected={i === selectedIndex}
                 onPick={() => onPick(item)}
                 onHover={() => onHover(i)}
               />
-            )
+            );
           })}
         </>
       )}
     </div>
-  )
+  );
 }
 
 function MessageBlock({ msg }) {
   return (
-    <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
-      <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${ROLE_STYLES[msg.role]} shadow-sm`}>
+    <div
+      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} mb-4`}
+    >
+      <div
+        className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${ROLE_STYLES[msg.role]} shadow-sm`}
+      >
         {msg.content && (
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{msg.content}</pre>
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+            {msg.content}
+          </pre>
         )}
         {msg.attachments?.length > 0 && (
-          <div className={`flex flex-wrap gap-1.5 ${msg.content ? 'mt-2' : ''}`}>
+          <div
+            className={`flex flex-wrap gap-1.5 ${msg.content ? "mt-2" : ""}`}
+          >
             {msg.attachments.map((a, i) => (
               <span
                 key={i}
                 className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md font-mono ${
-                  msg.role === 'user'
-                    ? 'bg-white/20 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200'
+                  msg.role === "user"
+                    ? "bg-white/20 text-white"
+                    : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
                 }`}
                 title={a.path}
               >
-                {a.contentType?.startsWith('image/') ? '🖼️' : '📎'} {a.filename}
+                {a.contentType?.startsWith("image/") ? "🖼️" : "📎"} {a.filename}
               </span>
             ))}
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }
 
 function StreamingBubble({ toolEvents, streamText }) {
-  const [showDetails, setShowDetails] = useState(false)
-  const latest = toolEvents[toolEvents.length - 1]?.label
+  const [showDetails, setShowDetails] = useState(false);
+  const latest = toolEvents[toolEvents.length - 1]?.label;
   return (
     <div className="flex justify-start mb-4">
       <div className="max-w-[85%] rounded-2xl px-4 py-2.5 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm">
@@ -158,24 +183,45 @@ function StreamingBubble({ toolEvents, streamText }) {
           <div className="mb-2">
             <button
               type="button"
-              onClick={() => setShowDetails(s => !s)}
+              onClick={() => setShowDetails((s) => !s)}
               className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
             >
               <span className="flex items-center gap-1">
                 <span className="w-1 h-1 bg-indigo-500 rounded-full animate-pulse" />
-                <span className="w-1 h-1 bg-indigo-500 rounded-full animate-pulse" style={{ animationDelay: '200ms' }} />
-                <span className="w-1 h-1 bg-indigo-500 rounded-full animate-pulse" style={{ animationDelay: '400ms' }} />
+                <span
+                  className="w-1 h-1 bg-indigo-500 rounded-full animate-pulse"
+                  style={{ animationDelay: "200ms" }}
+                />
+                <span
+                  className="w-1 h-1 bg-indigo-500 rounded-full animate-pulse"
+                  style={{ animationDelay: "400ms" }}
+                />
               </span>
-              <span>{latest || 'Working'}</span>
-              <span className="text-gray-400 dark:text-gray-500">· {toolEvents.length} step{toolEvents.length === 1 ? '' : 's'}</span>
-              <svg className={`w-3 h-3 transition-transform ${showDetails ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <span>{latest || "Working"}</span>
+              <span className="text-gray-400 dark:text-gray-500">
+                · {toolEvents.length} step{toolEvents.length === 1 ? "" : "s"}
+              </span>
+              <svg
+                className={`w-3 h-3 transition-transform ${showDetails ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
               </svg>
             </button>
             {showDetails && (
               <div className="mt-1.5 pl-3 border-l-2 border-gray-300 dark:border-gray-700 space-y-0.5">
                 {toolEvents.map((t, i) => (
-                  <div key={i} className="text-xs text-gray-500 dark:text-gray-400">
+                  <div
+                    key={i}
+                    className="text-xs text-gray-500 dark:text-gray-400"
+                  >
                     {t.label}
                   </div>
                 ))}
@@ -184,349 +230,455 @@ function StreamingBubble({ toolEvents, streamText }) {
           </div>
         )}
         {streamText ? (
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{streamText}</pre>
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+            {streamText}
+          </pre>
         ) : (
           <div className="flex items-center gap-1 py-1">
-            <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            <span
+              className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+              style={{ animationDelay: "0ms" }}
+            />
+            <span
+              className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+              style={{ animationDelay: "150ms" }}
+            />
+            <span
+              className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+              style={{ animationDelay: "300ms" }}
+            />
           </div>
         )}
       </div>
     </div>
-  )
+  );
 }
 
 export default function Chat() {
-  const [chats, setChats] = useState([])
-  const [activeId, setActiveId] = useState(null)
-  const [activeChat, setActiveChat] = useState(null)
-  const [agents, setAgents] = useState([])
-  const [repos, setRepos] = useState([])
-  const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [streamText, setStreamText] = useState('')
-  const [toolEvents, setToolEvents] = useState([])
-  const [mentionQuery, setMentionQuery] = useState(null)
-  const [mentionIndex, setMentionIndex] = useState(0)
-  const [attachments, setAttachments] = useState([]) // [{path, filename, size, contentType, uploading}]
-  const [dragActive, setDragActive] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [chats, setChats] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [activeChat, setActiveChat] = useState(null);
+  const [agents, setAgents] = useState([]);
+  const [repos, setRepos] = useState([]);
+  const [input, setInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [streamText, setStreamText] = useState("");
+  const [toolEvents, setToolEvents] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [attachments, setAttachments] = useState([]); // [{path, filename, size, contentType, uploading}]
+  const [dragActive, setDragActive] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [effortMenuOpen, setEffortMenuOpen] = useState(false);
 
-  const wsRef = useRef(null)
-  const bottomRef = useRef(null)
-  const inputRef = useRef(null)
+  const wsRef = useRef(null);
+  const bottomRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    refreshChats()
-    api.getAgents().then(setAgents).catch(() => {})
-    api.getRepositories().then(setRepos).catch(() => {})
-  }, [])
+    refreshChats();
+    api
+      .getAgents()
+      .then(setAgents)
+      .catch(() => {});
+    api
+      .getRepositories()
+      .then(setRepos)
+      .catch(() => {});
+  }, []);
 
   async function refreshChats() {
     try {
-      const list = await api.getChats('chat')
-      setChats(list)
-      if (!activeId && list.length > 0) selectChat(list[0].id)
+      const list = await api.getChats("chat");
+      setChats(list);
+      if (!activeId && list.length > 0) selectChat(list[0].id);
     } catch {}
   }
 
   async function selectChat(id) {
-    setActiveId(id)
-    setStreamText('')
-    setToolEvents([])
+    setActiveId(id);
+    setStreamText("");
+    setToolEvents([]);
     try {
-      const chat = await api.getChat(id)
-      setActiveChat(chat)
+      const chat = await api.getChat(id);
+      setActiveChat(chat);
     } catch {}
   }
 
   async function newChat() {
-    const c = await api.createChat()
-    setChats(prev => [c, ...prev])
-    selectChat(c.id)
+    const c = await api.createChat();
+    setChats((prev) => [c, ...prev]);
+    selectChat(c.id);
   }
 
   async function deleteChat(id, e) {
-    e.stopPropagation()
-    if (!confirm('Delete this chat?')) return
-    await api.deleteChat(id)
-    setChats(prev => prev.filter(c => c.id !== id))
+    e.stopPropagation();
+    if (!confirm("Delete this chat?")) return;
+    await api.deleteChat(id);
+    setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
-      setActiveId(null)
-      setActiveChat(null)
+      setActiveId(null);
+      setActiveChat(null);
     }
   }
 
   async function renameChatPrompt(id, e) {
-    e.stopPropagation()
-    const current = chats.find(c => c.id === id)
-    const next = prompt('Rename chat:', current?.title || '')
-    if (!next?.trim()) return
-    await api.renameChat(id, next.trim())
-    refreshChats()
-    if (activeId === id) selectChat(id)
+    e.stopPropagation();
+    const current = chats.find((c) => c.id === id);
+    const next = prompt("Rename chat:", current?.title || "");
+    if (!next?.trim()) return;
+    await api.renameChat(id, next.trim());
+    refreshChats();
+    if (activeId === id) selectChat(id);
   }
 
   async function setChatModel(modelId) {
-    if (!activeChat) return
-    setModelMenuOpen(false)
-    const updated = await api.updateChat(activeChat.id, { model: modelId })
-    setActiveChat(updated)
+    if (!activeChat) return;
+    setModelMenuOpen(false);
+    const updated = await api.updateChat(activeChat.id, { model: modelId });
+    setActiveChat(updated);
+  }
+
+  async function setChatEffort(effortId) {
+    if (!activeChat) return;
+    setEffortMenuOpen(false);
+    const updated = await api.updateChat(activeChat.id, { effort: effortId });
+    setActiveChat(updated);
+  }
+
+  async function togglePlanMode() {
+    if (!activeChat) return;
+    const updated = await api.updateChat(activeChat.id, {
+      planMode: !activeChat.planMode,
+    });
+    setActiveChat(updated);
   }
 
   async function addFolder(repo) {
-    if (!activeChat) return
-    const current = activeChat.folderPaths || []
-    if (current.includes(repo.repoPath)) return
-    const next = [...current, repo.repoPath]
-    const updated = await api.updateChat(activeChat.id, { folderPaths: next })
-    setActiveChat(updated)
+    if (!activeChat) return;
+    const current = activeChat.folderPaths || [];
+    if (current.includes(repo.repoPath)) return;
+    const next = [...current, repo.repoPath];
+    const updated = await api.updateChat(activeChat.id, { folderPaths: next });
+    setActiveChat(updated);
   }
 
   async function removeFolder(folderPath) {
-    if (!activeChat) return
-    const next = (activeChat.folderPaths || []).filter(p => p !== folderPath)
-    const updated = await api.updateChat(activeChat.id, { folderPaths: next })
-    setActiveChat(updated)
+    if (!activeChat) return;
+    const next = (activeChat.folderPaths || []).filter((p) => p !== folderPath);
+    const updated = await api.updateChat(activeChat.id, { folderPaths: next });
+    setActiveChat(updated);
   }
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === 1) return wsRef.current
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${protocol}://${window.location.host}/ws`)
-    wsRef.current = ws
+    if (wsRef.current?.readyState === 1) return wsRef.current;
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
+    wsRef.current = ws;
 
     const sidebarBump = (chat) => ({
-      id: chat.id, title: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt,
+      id: chat.id,
+      title: chat.title,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
       messageCount: (chat.messages || []).length,
-    })
+    });
 
     ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data)
-      if (msg.type === 'chat-user-saved') {
-        setActiveChat(msg.chat)
-        setChats(prev => [sidebarBump(msg.chat), ...prev.filter(c => c.id !== msg.chat.id)])
-      } else if (msg.type === 'chat-delta') {
-        setStreamText(prev => prev + msg.text)
-      } else if (msg.type === 'chat-tool') {
-        setToolEvents(prev => [...prev, { label: friendlyToolLabel(msg.name, msg.input) }])
-      } else if (msg.type === 'chat-done') {
-        setStreaming(false)
-        setStreamText('')
-        setToolEvents([])
-        setActiveChat(msg.chat)
-        setChats(prev => [sidebarBump(msg.chat), ...prev.filter(c => c.id !== msg.chat.id)])
-      } else if (msg.type === 'chat-stopped') {
-        setStreaming(false)
-      } else if (msg.type === 'chat-error') {
-        setStreaming(false)
-        setStreamText(prev => prev + `\n[Error] ${msg.error}`)
-      } else if (msg.type === 'chat-stderr') {
-        setToolEvents(prev => [...prev, { kind: 'err', label: msg.data }])
+      const msg = JSON.parse(e.data);
+      if (msg.type === "chat-user-saved") {
+        setActiveChat(msg.chat);
+        setChats((prev) => [
+          sidebarBump(msg.chat),
+          ...prev.filter((c) => c.id !== msg.chat.id),
+        ]);
+      } else if (msg.type === "chat-delta") {
+        setStreamText((prev) => prev + msg.text);
+      } else if (msg.type === "chat-tool") {
+        setToolEvents((prev) => [
+          ...prev,
+          { label: friendlyToolLabel(msg.name, msg.input) },
+        ]);
+      } else if (msg.type === "chat-done") {
+        setStreaming(false);
+        setStreamText("");
+        setToolEvents([]);
+        setActiveChat(msg.chat);
+        setChats((prev) => [
+          sidebarBump(msg.chat),
+          ...prev.filter((c) => c.id !== msg.chat.id),
+        ]);
+      } else if (msg.type === "chat-stopped") {
+        setStreaming(false);
+      } else if (msg.type === "chat-error") {
+        setStreaming(false);
+        setStreamText((prev) => prev + `\n[Error] ${msg.error}`);
+      } else if (msg.type === "chat-stderr") {
+        setToolEvents((prev) => [...prev, { kind: "err", label: msg.data }]);
       }
-    }
-    ws.onclose = () => { wsRef.current = null }
-    ws.onerror = () => { setStreaming(false) }
-    return ws
-  }, [])
+    };
+    ws.onclose = () => {
+      wsRef.current = null;
+    };
+    ws.onerror = () => {
+      setStreaming(false);
+    };
+    return ws;
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [activeChat?.messages, streamText, toolEvents])
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeChat?.messages, streamText, toolEvents]);
 
   useEffect(() => {
-    return () => { if (wsRef.current) wsRef.current.close() }
-  }, [])
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
 
   function send() {
-    if ((!input.trim() && attachments.length === 0) || streaming || !activeId) return
-    if (attachments.some(a => a.uploading)) return
-    const ws = connect()
-    const message = input.trim() || (attachments[0]?.filename ? `Attached: ${attachments.map(a => a.filename).join(', ')}` : '')
-    const sentAttachments = attachments.filter(a => a.path).map(a => ({
-      path: a.path, filename: a.filename, contentType: a.contentType, size: a.size,
-    }))
-    setInput('')
-    setAttachments([])
-    setStreaming(true)
-    setStreamText('')
-    setToolEvents([])
-    const dispatch = () => ws.send(JSON.stringify({
-      action: 'chat-send', chatId: activeId, message,
-      ...(sentAttachments.length > 0 ? { attachments: sentAttachments } : {}),
-    }))
-    if (ws.readyState === 1) dispatch()
-    else ws.addEventListener('open', dispatch, { once: true })
+    if ((!input.trim() && attachments.length === 0) || streaming || !activeId)
+      return;
+    if (attachments.some((a) => a.uploading)) return;
+    const ws = connect();
+    const message =
+      input.trim() ||
+      (attachments[0]?.filename
+        ? `Attached: ${attachments.map((a) => a.filename).join(", ")}`
+        : "");
+    const sentAttachments = attachments
+      .filter((a) => a.path)
+      .map((a) => ({
+        path: a.path,
+        filename: a.filename,
+        contentType: a.contentType,
+        size: a.size,
+      }));
+    setInput("");
+    setAttachments([]);
+    setStreaming(true);
+    setStreamText("");
+    setToolEvents([]);
+    const dispatch = () =>
+      ws.send(
+        JSON.stringify({
+          action: "chat-send",
+          chatId: activeId,
+          message,
+          ...(sentAttachments.length > 0
+            ? { attachments: sentAttachments }
+            : {}),
+        }),
+      );
+    if (ws.readyState === 1) dispatch();
+    else ws.addEventListener("open", dispatch, { once: true });
   }
 
   async function uploadFiles(files) {
-    const items = Array.from(files).slice(0, 10)
-    const placeholders = items.map(f => ({ filename: f.name, size: f.size, contentType: f.type, uploading: true, _localId: Math.random() }))
-    setAttachments(prev => [...prev, ...placeholders])
+    const items = Array.from(files).slice(0, 10);
+    const placeholders = items.map((f) => ({
+      filename: f.name,
+      size: f.size,
+      contentType: f.type,
+      uploading: true,
+      _localId: Math.random(),
+    }));
+    setAttachments((prev) => [...prev, ...placeholders]);
     for (let i = 0; i < items.length; i++) {
-      const file = items[i]
-      const placeholder = placeholders[i]
+      const file = items[i];
+      const placeholder = placeholders[i];
       try {
         const dataUrl = await new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result)
-          reader.onerror = reject
-          reader.readAsDataURL(file)
-        })
-        const resp = await api.uploadAttachment({ filename: file.name, data: dataUrl, contentType: file.type })
-        setAttachments(prev => prev.map(a => a._localId === placeholder._localId
-          ? { path: resp.path, filename: resp.filename, size: resp.size, contentType: resp.contentType, uploading: false, _localId: a._localId }
-          : a
-        ))
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const resp = await api.uploadAttachment({
+          filename: file.name,
+          data: dataUrl,
+          contentType: file.type,
+        });
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a._localId === placeholder._localId
+              ? {
+                  path: resp.path,
+                  filename: resp.filename,
+                  size: resp.size,
+                  contentType: resp.contentType,
+                  uploading: false,
+                  _localId: a._localId,
+                }
+              : a,
+          ),
+        );
       } catch (err) {
-        setAttachments(prev => prev.filter(a => a._localId !== placeholder._localId))
-        alert(`Upload failed for ${file.name}: ${err.message}`)
+        setAttachments((prev) =>
+          prev.filter((a) => a._localId !== placeholder._localId),
+        );
+        alert(`Upload failed for ${file.name}: ${err.message}`);
       }
     }
   }
 
   function removeAttachment(localId) {
-    setAttachments(prev => prev.filter(a => a._localId !== localId))
+    setAttachments((prev) => prev.filter((a) => a._localId !== localId));
   }
 
   function onDrop(e) {
-    e.preventDefault()
-    setDragActive(false)
-    if (!activeId) return
-    const files = e.dataTransfer?.files
-    if (files && files.length > 0) uploadFiles(files)
+    e.preventDefault();
+    setDragActive(false);
+    if (!activeId) return;
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) uploadFiles(files);
   }
 
   function onPaste(e) {
-    if (!activeId) return
-    const items = e.clipboardData?.items
-    if (!items) return
-    const files = []
+    if (!activeId) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files = [];
     for (const item of items) {
-      if (item.kind === 'file') {
-        const f = item.getAsFile()
-        if (f) files.push(f)
+      if (item.kind === "file") {
+        const f = item.getAsFile();
+        if (f) files.push(f);
       }
     }
     if (files.length > 0) {
-      e.preventDefault()
-      uploadFiles(files)
+      e.preventDefault();
+      uploadFiles(files);
     }
   }
 
   function stop() {
     if (wsRef.current?.readyState === 1) {
-      wsRef.current.send(JSON.stringify({ action: 'chat-stop' }))
+      wsRef.current.send(JSON.stringify({ action: "chat-stop" }));
     }
   }
 
   const mentionItems = (() => {
-    if (mentionQuery === null) return []
-    const q = mentionQuery.toLowerCase()
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
     const folders = repos
-      .filter(r => r.name.toLowerCase().includes(q))
-      .map(r => ({ kind: 'folder', data: r }))
+      .filter((r) => r.name.toLowerCase().includes(q))
+      .map((r) => ({ kind: "folder", data: r }));
     const ags = agents
-      .filter(a => (a.name || a.filename || '').toLowerCase().includes(q))
-      .map(a => ({ kind: 'agent', data: a }))
-    return [...folders, ...ags]
-  })()
+      .filter((a) => (a.name || a.filename || "").toLowerCase().includes(q))
+      .map((a) => ({ kind: "agent", data: a }));
+    return [...folders, ...ags];
+  })();
 
-  useEffect(() => { setMentionIndex(0) }, [mentionQuery])
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mentionQuery]);
 
   function onInputChange(e) {
-    const v = e.target.value
-    setInput(v)
-    const cursor = e.target.selectionStart
-    const before = v.slice(0, cursor)
-    const m = before.match(/@([\w-]*)$/)
-    setMentionQuery(m ? m[1] : null)
+    const v = e.target.value;
+    setInput(v);
+    const cursor = e.target.selectionStart;
+    const before = v.slice(0, cursor);
+    const m = before.match(/@([\w-]*)$/);
+    setMentionQuery(m ? m[1] : null);
   }
 
   function pickMentionItem(item) {
-    if (item.kind === 'folder') pickFolder(item.data)
-    else pickAgent(item.data)
+    if (item.kind === "folder") pickFolder(item.data);
+    else pickAgent(item.data);
   }
 
   function pickAgent(agent) {
-    const name = agent.name || agent.filename
-    const cursor = inputRef.current?.selectionStart ?? input.length
-    const before = input.slice(0, cursor).replace(/@([\w-]*)$/, `@${name} `)
-    const after = input.slice(cursor)
-    setInput(before + after)
-    setMentionQuery(null)
+    const name = agent.name || agent.filename;
+    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const before = input.slice(0, cursor).replace(/@([\w-]*)$/, `@${name} `);
+    const after = input.slice(cursor);
+    setInput(before + after);
+    setMentionQuery(null);
     setTimeout(() => {
-      inputRef.current?.focus()
-      const pos = before.length
-      inputRef.current?.setSelectionRange(pos, pos)
-    }, 0)
+      inputRef.current?.focus();
+      const pos = before.length;
+      inputRef.current?.setSelectionRange(pos, pos);
+    }, 0);
   }
 
   function pickFolder(repo) {
-    addFolder(repo)
+    addFolder(repo);
     // Strip the @query from the input — folder is attached as a pill instead
-    const cursor = inputRef.current?.selectionStart ?? input.length
-    const before = input.slice(0, cursor).replace(/@([\w-]*)$/, '')
-    const after = input.slice(cursor)
-    setInput(before + after)
-    setMentionQuery(null)
+    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const before = input.slice(0, cursor).replace(/@([\w-]*)$/, "");
+    const after = input.slice(cursor);
+    setInput(before + after);
+    setMentionQuery(null);
     setTimeout(() => {
-      inputRef.current?.focus()
-      const pos = before.length
-      inputRef.current?.setSelectionRange(pos, pos)
-    }, 0)
+      inputRef.current?.focus();
+      const pos = before.length;
+      inputRef.current?.setSelectionRange(pos, pos);
+    }, 0);
   }
 
   function onKeyDown(e) {
     if (mentionQuery !== null && mentionItems.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setMentionIndex(i => (i + 1) % mentionItems.length)
-        return
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionItems.length);
+        return;
       }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setMentionIndex(i => (i - 1 + mentionItems.length) % mentionItems.length)
-        return
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex(
+          (i) => (i - 1 + mentionItems.length) % mentionItems.length,
+        );
+        return;
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault()
-        pickMentionItem(mentionItems[mentionIndex])
-        return
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickMentionItem(mentionItems[mentionIndex]);
+        return;
       }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setMentionQuery(null)
-        return
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey && mentionQuery === null) {
-      e.preventDefault()
-      send()
+    if (e.key === "Enter" && !e.shiftKey && mentionQuery === null) {
+      e.preventDefault();
+      send();
     }
   }
 
-  const messages = activeChat?.messages || []
-  const currentModel = activeChat?.model || 'sonnet'
-  const folderPaths = activeChat?.folderPaths || []
-  const folderPills = folderPaths.map(p => {
-    const repo = repos.find(r => r.repoPath === p)
-    return { path: p, name: repo?.name || p.split('/').pop() }
-  })
+  const messages = activeChat?.messages || [];
+  const currentModel = activeChat?.model || "sonnet";
+  const folderPaths = activeChat?.folderPaths || [];
+  const folderPills = folderPaths.map((p) => {
+    const repo = repos.find((r) => r.repoPath === p);
+    return { path: p, name: repo?.name || p.split("/").pop() };
+  });
 
   return (
     <div className="h-full flex bg-gray-50 dark:bg-gray-950">
       {/* Sidebar — chat list */}
-      <aside className={`${sidebarOpen ? 'w-72' : 'w-0'} transition-all overflow-hidden border-r border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-900`}>
+      <aside
+        className={`${sidebarOpen ? "w-72" : "w-0"} transition-all overflow-hidden border-r border-gray-200 dark:border-gray-800 flex flex-col bg-white dark:bg-gray-900`}
+      >
         <div className="p-3 border-b border-gray-200 dark:border-gray-800">
           <button
             onClick={newChat}
             className="w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
             </svg>
             New chat
           </button>
@@ -537,14 +689,14 @@ export default function Chat() {
               No chats yet. Create one to get started.
             </div>
           )}
-          {chats.map(c => (
+          {chats.map((c) => (
             <div
               key={c.id}
               onClick={() => selectChat(c.id)}
               className={`group cursor-pointer px-3 py-2 rounded-lg transition-colors ${
                 activeId === c.id
-                  ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-900 dark:text-indigo-100'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                  ? "bg-indigo-100 dark:bg-indigo-900/40 text-indigo-900 dark:text-indigo-100"
+                  : "hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
               }`}
             >
               <div className="flex items-start justify-between gap-2">
@@ -555,14 +707,42 @@ export default function Chat() {
                   </div>
                 </div>
                 <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  <button onClick={(e) => renameChatPrompt(c.id, e)} className="p-1 text-gray-500 hover:text-gray-900 dark:hover:text-white" title="Rename">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  <button
+                    onClick={(e) => renameChatPrompt(c.id, e)}
+                    className="p-1 text-gray-500 hover:text-gray-900 dark:hover:text-white"
+                    title="Rename"
+                  >
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                      />
                     </svg>
                   </button>
-                  <button onClick={(e) => deleteChat(c.id, e)} className="p-1 text-gray-500 hover:text-red-500" title="Delete">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  <button
+                    onClick={(e) => deleteChat(c.id, e)}
+                    className="p-1 text-gray-500 hover:text-red-500"
+                    title="Delete"
+                  >
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
                     </svg>
                   </button>
                 </div>
@@ -574,60 +754,212 @@ export default function Chat() {
 
       {/* Main chat area */}
       <main
-        className={`flex-1 flex flex-col overflow-hidden relative ${dragActive ? 'ring-2 ring-indigo-400 ring-inset' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('Files') && activeId) setDragActive(true) }}
-        onDragLeave={(e) => { if (e.target === e.currentTarget) setDragActive(false) }}
+        className={`flex-1 flex flex-col overflow-hidden relative ${dragActive ? "ring-2 ring-indigo-400 ring-inset" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.types.includes("Files") && activeId)
+            setDragActive(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.target === e.currentTarget) setDragActive(false);
+        }}
         onDrop={onDrop}
       >
         {/* Header */}
         <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex items-center gap-3">
           <button
-            onClick={() => setSidebarOpen(o => !o)}
+            onClick={() => setSidebarOpen((o) => !o)}
             className="p-1.5 text-gray-500 hover:text-gray-900 dark:hover:text-white rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
             title="Toggle sidebar"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
             </svg>
           </button>
           <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-              {activeChat?.title || 'Chat with orchestrator'}
+              {activeChat?.title || "Chat with orchestrator"}
             </h1>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">@</code> mentions agents and folders
+              <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">
+                @
+              </code>{" "}
+              mentions agents and folders
             </p>
           </div>
+
+          {/* Plan mode toggle */}
+          {activeChat && (
+            <button
+              onClick={togglePlanMode}
+              title={
+                activeChat.planMode
+                  ? "Plan mode ON — Claude will propose a plan before executing"
+                  : "Toggle plan mode"
+              }
+              className={`px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors flex items-center gap-1.5 ${
+                activeChat.planMode
+                  ? "bg-indigo-600 border-indigo-600 text-white hover:bg-indigo-500"
+                  : "border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+              }`}
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                />
+              </svg>
+              <span>Plan</span>
+            </button>
+          )}
+
+          {/* Effort dropdown */}
+          {activeChat && (
+            <div className="relative">
+              <button
+                onClick={() => setEffortMenuOpen((o) => !o)}
+                title="Thinking effort — higher = deeper reasoning, more cost"
+                className="px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 flex items-center gap-1.5"
+              >
+                <span>
+                  Effort:{" "}
+                  {EFFORTS.find((e) => e.id === (activeChat.effort || ""))
+                    ?.label || "Default"}
+                </span>
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </button>
+              {effortMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setEffortMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-1 w-44 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20">
+                    {EFFORTS.map((e) => {
+                      const cur = activeChat.effort || "";
+                      const selected = cur === e.id;
+                      return (
+                        <button
+                          key={e.id || "default"}
+                          onClick={() => setChatEffort(e.id)}
+                          className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 first:rounded-t-lg last:rounded-b-lg flex items-center justify-between ${
+                            selected
+                              ? "text-indigo-600 dark:text-indigo-400 font-medium"
+                              : "text-gray-700 dark:text-gray-300"
+                          }`}
+                        >
+                          {e.label}
+                          {selected && (
+                            <svg
+                              className="w-4 h-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Model dropdown */}
           {activeChat && (
             <div className="relative">
               <button
-                onClick={() => setModelMenuOpen(o => !o)}
+                onClick={() => setModelMenuOpen((o) => !o)}
                 className="px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 flex items-center gap-1.5"
                 title="Change model"
               >
-                <span>Model: {MODELS.find(m => m.id === currentModel)?.label || currentModel}</span>
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                <span>
+                  Model:{" "}
+                  {MODELS.find((m) => m.id === currentModel)?.label ||
+                    currentModel}
+                </span>
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
                 </svg>
               </button>
               {modelMenuOpen && (
                 <>
-                  <div className="fixed inset-0 z-10" onClick={() => setModelMenuOpen(false)} />
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setModelMenuOpen(false)}
+                  />
                   <div className="absolute right-0 mt-1 w-44 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20">
-                    {MODELS.map(m => (
+                    {MODELS.map((m) => (
                       <button
                         key={m.id}
                         onClick={() => setChatModel(m.id)}
                         className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 first:rounded-t-lg last:rounded-b-lg flex items-center justify-between ${
-                          currentModel === m.id ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+                          currentModel === m.id
+                            ? "text-indigo-600 dark:text-indigo-400 font-medium"
+                            : "text-gray-700 dark:text-gray-300"
                         }`}
                       >
                         {m.label}
                         {currentModel === m.id && (
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
                           </svg>
                         )}
                       </button>
@@ -642,8 +974,18 @@ export default function Chat() {
         {dragActive && (
           <div className="absolute inset-0 z-40 bg-indigo-500/10 dark:bg-indigo-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
             <div className="bg-white dark:bg-gray-900 px-6 py-4 rounded-xl shadow-xl border-2 border-dashed border-indigo-400 text-indigo-700 dark:text-indigo-300 flex items-center gap-3">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                />
               </svg>
               <span className="font-medium">Drop file to attach</span>
             </div>
@@ -653,17 +995,33 @@ export default function Chat() {
         {/* Folder pills */}
         {folderPills.length > 0 && (
           <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">Working in:</span>
-            {folderPills.map(f => (
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+              Working in:
+            </span>
+            {folderPills.map((f) => (
               <span
                 key={f.path}
                 className="inline-flex items-center gap-1.5 px-2 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs rounded-md font-mono"
                 title={f.path}
               >
                 📁 {f.name}
-                <button onClick={() => removeFolder(f.path)} className="hover:text-red-500" title="Remove">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <button
+                  onClick={() => removeFolder(f.path)}
+                  className="hover:text-red-500"
+                  title="Remove"
+                >
+                  <svg
+                    className="w-3 h-3"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
                   </svg>
                 </button>
               </span>
@@ -680,21 +1038,44 @@ export default function Chat() {
           ) : messages.length === 0 && !streaming ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-4">
               <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-900/40 rounded-full flex items-center justify-center mb-3">
-                <svg className="w-6 h-6 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                <svg
+                  className="w-6 h-6 text-indigo-600 dark:text-indigo-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
                 </svg>
               </div>
               <p className="text-sm text-gray-600 dark:text-gray-400 max-w-md">
-                Type <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">@</code> to mention an agent
-                {' '}(e.g. <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">@finance</code>)
-                {' '}or a folder to switch the working directory.
+                Type{" "}
+                <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">
+                  @
+                </code>{" "}
+                to mention an agent (e.g.{" "}
+                <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">
+                  @finance
+                </code>
+                ) or a folder to switch the working directory.
               </p>
             </div>
           ) : (
             <div className="max-w-3xl mx-auto">
-              {messages.map((m, i) => <MessageBlock key={i} msg={m} />)}
+              {messages.map((m, i) => (
+                <MessageBlock key={i} msg={m} />
+              ))}
 
-              {streaming && <StreamingBubble toolEvents={toolEvents} streamText={streamText} />}
+              {streaming && (
+                <StreamingBubble
+                  toolEvents={toolEvents}
+                  streamText={streamText}
+                />
+              )}
               <div ref={bottomRef} />
             </div>
           )}
@@ -713,23 +1094,59 @@ export default function Chat() {
             )}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
-                {attachments.map(a => (
-                  <span key={a._localId} className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border ${
-                    a.uploading
-                      ? 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400'
-                      : 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
-                  }`}>
-                    <span>{a.contentType?.startsWith('image/') ? '🖼️' : '📎'}</span>
-                    <span className="font-mono truncate max-w-[200px]">{a.filename}</span>
+                {attachments.map((a) => (
+                  <span
+                    key={a._localId}
+                    className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border ${
+                      a.uploading
+                        ? "bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400"
+                        : "bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300"
+                    }`}
+                  >
+                    <span>
+                      {a.contentType?.startsWith("image/") ? "🖼️" : "📎"}
+                    </span>
+                    <span className="font-mono truncate max-w-[200px]">
+                      {a.filename}
+                    </span>
                     {a.uploading ? (
-                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      <svg
+                        className="w-3 h-3 animate-spin"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v8z"
+                        />
                       </svg>
                     ) : (
-                      <button onClick={() => removeAttachment(a._localId)} className="hover:text-red-500" title="Remove">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      <button
+                        onClick={() => removeAttachment(a._localId)}
+                        className="hover:text-red-500"
+                        title="Remove"
+                      >
+                        <svg
+                          className="w-3 h-3"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
                         </svg>
                       </button>
                     )}
@@ -738,10 +1155,31 @@ export default function Chat() {
               </div>
             )}
             <div className="flex items-end gap-2 border border-gray-300 dark:border-gray-700 rounded-2xl px-3 py-2 bg-white dark:bg-gray-900 shadow-sm focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 dark:focus-within:ring-indigo-900/40 dark:focus-within:border-indigo-400 transition-all">
-              <label className="cursor-pointer text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors shrink-0 self-end pb-1" title="Attach file">
-                <input type="file" multiple className="hidden" onChange={(e) => { uploadFiles(e.target.files); e.target.value = '' }} />
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              <label
+                className="cursor-pointer text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors shrink-0 self-end pb-1"
+                title="Attach file"
+              >
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    uploadFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                  />
                 </svg>
               </label>
               <textarea
@@ -750,24 +1188,36 @@ export default function Chat() {
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
-                placeholder={activeId ? "Message... (@ for agents and folders, drop or paste files)" : "Create a chat first"}
+                placeholder={
+                  activeId
+                    ? "Message... (@ for agents and folders, drop or paste files)"
+                    : "Create a chat first"
+                }
                 disabled={!activeId || streaming}
                 rows={1}
                 className="flex-1 resize-none bg-transparent text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none max-h-40"
-                style={{ minHeight: '24px' }}
+                style={{ minHeight: "24px" }}
                 onInput={(e) => {
-                  e.target.style.height = 'auto'
-                  e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'
+                  e.target.style.height = "auto";
+                  e.target.style.height =
+                    Math.min(e.target.scrollHeight, 160) + "px";
                 }}
               />
               {streaming ? (
-                <button onClick={stop} className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs rounded-lg font-medium transition-colors">
+                <button
+                  onClick={stop}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs rounded-lg font-medium transition-colors"
+                >
                   Stop
                 </button>
               ) : (
                 <button
                   onClick={send}
-                  disabled={(!input.trim() && attachments.length === 0) || !activeId || attachments.some(a => a.uploading)}
+                  disabled={
+                    (!input.trim() && attachments.length === 0) ||
+                    !activeId ||
+                    attachments.some((a) => a.uploading)
+                  }
                   className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white text-xs rounded-lg font-medium transition-colors"
                 >
                   Send
@@ -781,5 +1231,5 @@ export default function Chat() {
         </div>
       </main>
     </div>
-  )
+  );
 }
