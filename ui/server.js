@@ -2980,6 +2980,11 @@ wss.on("connection", (ws, req) => {
         args.push("--permission-mode", "plan");
       }
 
+      // Enable the Claude-in-Chrome integration so /chat subprocesses can use
+      // mcp__claude-in-chrome__* browser tools (open tabs, click, screenshot,
+      // read DOM, etc.). Without --chrome the subprocess has no browser MCP.
+      args.push("--chrome");
+
       // Folder mentions: keep cwd=WORKSPACE so --resume keeps finding the session,
       // expose mentioned folders via --add-dir so Claude can read/write inside them.
       const folderPaths = (chat.folderPaths || []).filter(
