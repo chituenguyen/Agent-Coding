@@ -96,6 +96,12 @@ export const api = {
   // Account
   getAccount: () => req('GET', '/account'),
 
+  // Usage
+  getUsage: () => req('GET', '/usage'),
+
+  // Uploads — accepts {filename, data (base64 or data URL), contentType}
+  uploadAttachment: (data) => req('POST', '/uploads', data),
+
   // Chat
   getChats: (kind) => req('GET', `/chats${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`),
   createChat: (data) => req('POST', '/chats', data || {}),

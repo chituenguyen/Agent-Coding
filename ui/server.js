@@ -3,7 +3,7 @@ import { createServer } from 'http'
 import { WebSocketServer } from 'ws'
 import matter from 'gray-matter'
 import { spawn } from 'child_process'
-import { readdir, readFile, writeFile, mkdir, rm, stat } from 'fs/promises'
+import { readdir, readFile, writeFile, appendFile, mkdir, rm, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -41,7 +41,7 @@ const app = express()
 const server = createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
-app.use(express.json())
+app.use(express.json({ limit: '20mb' }))
 
 // Remote access gate — cookie-based (works through tunnels)
 app.use((req, res, next) => {
@@ -1492,6 +1492,114 @@ app.post('/api/remote/disable', (req, res) => {
   res.json({ ok: true })
 })
 
+// ─── attachments ────────────────────────────────────────────────────────────
+const attachmentsDir = () => path.join(WORKSPACE, 'attachments')
+
+async function ensureAttachmentsDir() {
+  if (!existsSync(attachmentsDir())) await mkdir(attachmentsDir(), { recursive: true })
+}
+
+function sanitizeFilename(name) {
+  return (name || 'file')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .slice(0, 80)
+}
+
+app.post('/api/uploads', async (req, res) => {
+  try {
+    const { filename, data, contentType } = req.body || {}
+    if (!filename || !data) return res.status(400).json({ error: 'filename and data required' })
+    const base64 = String(data).replace(/^data:[^;]+;base64,/, '')
+    const buf = Buffer.from(base64, 'base64')
+    if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'File too large (max 15 MB)' })
+    await ensureAttachmentsDir()
+    const id = crypto.randomUUID().slice(0, 8)
+    const safe = sanitizeFilename(filename)
+    const finalName = `${id}-${safe}`
+    const fullPath = path.join(attachmentsDir(), finalName)
+    await writeFile(fullPath, buf)
+    res.json({ path: fullPath, filename, contentType: contentType || null, size: buf.length })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── usage tracking ─────────────────────────────────────────────────────────
+const usagePath = () => path.join(WORKSPACE, 'usage.jsonl')
+
+async function logUsage(entry) {
+  const line = JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'
+  try { await appendFile(usagePath(), line) } catch (e) { console.warn('[usage] append failed:', e.message) }
+}
+
+function extractUsage(event) {
+  if (!event || event.type !== 'result') return null
+  const u = event.usage || {}
+  return {
+    cost_usd: event.total_cost_usd || 0,
+    duration_ms: event.duration_ms || 0,
+    duration_api_ms: event.duration_api_ms || 0,
+    num_turns: event.num_turns || 0,
+    tokens: {
+      input: u.input_tokens || 0,
+      output: u.output_tokens || 0,
+      cache_read: u.cache_read_input_tokens || 0,
+      cache_creation: u.cache_creation_input_tokens || 0,
+    },
+    is_error: !!event.is_error,
+    session_id: event.session_id || null,
+  }
+}
+
+async function readUsageEntries(limit = 1000) {
+  try {
+    const raw = await readFile(usagePath(), 'utf8')
+    const lines = raw.split('\n').filter(Boolean)
+    const slice = lines.slice(-limit)
+    return slice.map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
+  } catch { return [] }
+}
+
+app.get('/api/usage', async (req, res) => {
+  try {
+    const entries = await readUsageEntries(2000)
+    const totals = {
+      cost_usd: 0, runs: entries.length, errors: 0,
+      tokens: { input: 0, output: 0, cache_read: 0, cache_creation: 0 },
+      duration_ms: 0,
+    }
+    const byKind = {}
+    const byModel = {}
+    const byDate = {}
+    for (const e of entries) {
+      totals.cost_usd += e.cost_usd || 0
+      totals.duration_ms += e.duration_ms || 0
+      if (e.is_error) totals.errors += 1
+      for (const k of ['input', 'output', 'cache_read', 'cache_creation']) {
+        totals.tokens[k] += (e.tokens?.[k] || 0)
+      }
+      const kk = e.kind || 'unknown'
+      byKind[kk] = byKind[kk] || { runs: 0, cost_usd: 0 }
+      byKind[kk].runs += 1
+      byKind[kk].cost_usd += e.cost_usd || 0
+      const m = e.model || 'unknown'
+      byModel[m] = byModel[m] || { runs: 0, cost_usd: 0 }
+      byModel[m].runs += 1
+      byModel[m].cost_usd += e.cost_usd || 0
+      const day = (e.at || '').slice(0, 10)
+      if (day) {
+        byDate[day] = byDate[day] || { runs: 0, cost_usd: 0 }
+        byDate[day].runs += 1
+        byDate[day].cost_usd += e.cost_usd || 0
+      }
+    }
+    const recent = entries.slice(-50).reverse()
+    res.json({ totals, byKind, byModel, byDate, recent })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── account ────────────────────────────────────────────────────────────────
 app.get('/api/account', async (req, res) => {
   try {
@@ -1675,6 +1783,7 @@ wss.on('connection', (ws, req) => {
 
       // Parse stream-json: each line is a JSON object with type/content
       let stdoutBuf = ''
+      let lastResultEvent = null
       proc.stdout.on('data', (chunk) => {
         stdoutBuf += chunk.toString()
         const lines = stdoutBuf.split('\n')
@@ -1707,6 +1816,9 @@ wss.on('connection', (ws, req) => {
               }
             } else if (event.type === 'result' && event.result) {
               text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+              lastResultEvent = event
+            } else if (event.type === 'result') {
+              lastResultEvent = event
             }
             if (text) {
               wf.output.push({ text, isErr: false })
@@ -1730,6 +1842,7 @@ wss.on('connection', (ws, req) => {
       proc.on('close', (code) => {
         wf.exitCode = code
         safeSend({ type: 'done', code })
+        if (lastResultEvent) logUsage({ kind: 'workflow', ref: taskPath, ...extractUsage(lastResultEvent) })
         // Clean up after 5 minutes (keep output for reconnect)
         setTimeout(() => runningWorkflows.delete(taskPath), 5 * 60 * 1000)
       })
@@ -1787,6 +1900,7 @@ wss.on('connection', (ws, req) => {
       safeSend({ type: 'started', taskPath: fixPath })
 
       let stdoutBuf = ''
+      let lastResultEvent = null
       proc.stdout.on('data', (chunk) => {
         stdoutBuf += chunk.toString()
         const lines = stdoutBuf.split('\n')
@@ -1815,6 +1929,9 @@ wss.on('connection', (ws, req) => {
               if (summary.length > 0) text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
             } else if (event.type === 'result' && event.result) {
               text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+              lastResultEvent = event
+            } else if (event.type === 'result') {
+              lastResultEvent = event
             }
             if (text) {
               wf.output.push({ text, isErr: false })
@@ -1837,6 +1954,7 @@ wss.on('connection', (ws, req) => {
       proc.on('close', async (code) => {
         wf.exitCode = code
         safeSend({ type: 'done', code })
+        if (lastResultEvent) logUsage({ kind: 'fix', ref: fixPath, ...extractUsage(lastResultEvent) })
         setTimeout(() => runningWorkflows.delete(fixPath), 5 * 60 * 1000)
         try {
           const q = await readQueue()
@@ -1903,6 +2021,7 @@ wss.on('connection', (ws, req) => {
       safeSend({ type: 'started', taskPath: subtaskPath })
 
       let stdoutBuf = ''
+      let lastResultEvent = null
       proc.stdout.on('data', (chunk) => {
         stdoutBuf += chunk.toString()
         const lines = stdoutBuf.split('\n')
@@ -1928,6 +2047,9 @@ wss.on('connection', (ws, req) => {
               if (summary.length > 0) text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
             } else if (event.type === 'result' && event.result) {
               text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+              lastResultEvent = event
+            } else if (event.type === 'result') {
+              lastResultEvent = event
             }
             if (text) {
               wf.output.push({ text, isErr: false })
@@ -1950,6 +2072,7 @@ wss.on('connection', (ws, req) => {
       proc.on('close', async (code) => {
         wf.exitCode = code
         safeSend({ type: 'done', code })
+        if (lastResultEvent) logUsage({ kind: 'subtask', ref: subtaskPath, ...extractUsage(lastResultEvent) })
         setTimeout(() => runningWorkflows.delete(subtaskPath), 5 * 60 * 1000)
         try {
           const q = await readQueue()
@@ -1996,6 +2119,7 @@ wss.on('connection', (ws, req) => {
       )
 
       let cmdBuf = ''
+      let lastResultEvent = null
       proc.stdout.on('data', (chunk) => {
         cmdBuf += chunk.toString()
         const lines = cmdBuf.split('\n')
@@ -2026,6 +2150,9 @@ wss.on('connection', (ws, req) => {
               }
             } else if (event.type === 'result' && event.result) {
               text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+              lastResultEvent = event
+            } else if (event.type === 'result') {
+              lastResultEvent = event
             }
             if (text) safeSend({ type: 'stdout', data: text })
           } catch {
@@ -2038,6 +2165,7 @@ wss.on('connection', (ws, req) => {
       })
       proc.on('close', (code) => {
         safeSend({ type: 'done', code })
+        if (lastResultEvent) logUsage({ kind: 'command', ref: command?.slice(0, 200), ...extractUsage(lastResultEvent) })
       })
       proc.on('error', (err) => {
         safeSend({ type: 'error', message: err.message })
@@ -2057,7 +2185,7 @@ wss.on('connection', (ws, req) => {
     }
 
     if (msg.action === 'chat-send') {
-      const { chatId, message } = msg
+      const { chatId, message, attachments } = msg
       if (!chatId || !message?.trim()) {
         safeSend({ type: 'chat-error', error: 'chatId and message required' })
         return
@@ -2069,17 +2197,30 @@ wss.on('connection', (ws, req) => {
         return
       }
 
-      // Persist user message immediately
+      // Build the prompt: append attachment paths inline so Claude can read them
+      const attachmentList = Array.isArray(attachments)
+        ? attachments.filter(a => a?.path && existsSync(a.path)).slice(0, 10)
+        : []
+      const promptForClaude = attachmentList.length > 0
+        ? `${message}\n\nAttached files:\n${attachmentList.map(a => `- ${a.path}${a.filename ? ` (${a.filename})` : ''}`).join('\n')}`
+        : message
+
+      // Persist user message immediately (with attachment metadata)
       const now = new Date().toISOString()
-      chat.messages.push({ role: 'user', content: message, timestamp: now })
+      chat.messages.push({
+        role: 'user',
+        content: message,
+        timestamp: now,
+        ...(attachmentList.length > 0 ? { attachments: attachmentList.map(a => ({ path: a.path, filename: a.filename, contentType: a.contentType, size: a.size })) } : {}),
+      })
       chat.updatedAt = now
       if (chat.messages.length === 1 || !chat.title || chat.title === 'New chat') {
-        chat.title = message.split('\n')[0].slice(0, 80)
+        chat.title = message.split('\n')[0].slice(0, 80) || (attachmentList[0]?.filename ?? 'New chat')
       }
       await writeChat(chat)
       safeSend({ type: 'chat-user-saved', chat })
 
-      const args = ['-p', message, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+      const args = ['-p', promptForClaude, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
       if (chat.sessionId) {
         args.push('--resume', chat.sessionId)
       } else {
@@ -2108,6 +2249,7 @@ wss.on('connection', (ws, req) => {
 
       let assistantText = ''
       let stdoutBuf = ''
+      let lastResultEvent = null
       proc.stdout.on('data', (chunk) => {
         stdoutBuf += chunk.toString()
         const lines = stdoutBuf.split('\n')
@@ -2116,10 +2258,10 @@ wss.on('connection', (ws, req) => {
           if (!line.trim()) continue
           try {
             const event = JSON.parse(line)
-            // Only trust session_id from init/assistant — error results return a throwaway id
             if (event.session_id && (event.type === 'system' || event.type === 'assistant')) {
               chat.sessionId = event.session_id
             }
+            if (event.type === 'result') lastResultEvent = event
 
             if (event.type === 'assistant' && event.message?.content) {
               for (const block of event.message.content) {
@@ -2127,14 +2269,10 @@ wss.on('connection', (ws, req) => {
                   assistantText += block.text
                   safeSend({ type: 'chat-delta', text: block.text })
                 } else if (block.type === 'tool_use') {
-                  // Notify the UI but do NOT pollute the saved message text
                   safeSend({ type: 'chat-tool', name: block.name, input: block.input || {} })
                 }
               }
             }
-            // tool_result events are intentionally not forwarded — they are noisy
-            // raw payloads. The UI only needs to know "Claude is working", not what
-            // each tool returned internally.
           } catch {
             // not JSON, ignore
           }
@@ -2152,6 +2290,15 @@ wss.on('connection', (ws, req) => {
         chat.updatedAt = new Date().toISOString()
         await writeChat(chat)
         safeSend({ type: 'chat-done', code, chat })
+        if (lastResultEvent) {
+          logUsage({
+            kind: chat.kind || 'chat',
+            ref: chat.id,
+            model: chat.model || null,
+            agent: chat.agent || null,
+            ...extractUsage(lastResultEvent),
+          })
+        }
         if (ws.activeChatProc === proc) {
           ws.activeChatProc = null
           ws.activeChatId = null
@@ -2274,6 +2421,7 @@ async function queueTick() {
   }
 
   let stdoutBuf = ''
+  let lastResultEvent = null
   proc.stdout.on('data', (chunk) => {
     stdoutBuf += chunk.toString()
     const lines = stdoutBuf.split('\n')
@@ -2299,6 +2447,9 @@ async function queueTick() {
           if (summary.length > 0) text = `\n✓ [Result] ${summary.slice(0, 500)}${summary.length > 500 ? '...' : ''}\n`
         } else if (event.type === 'result' && event.result) {
           text = typeof event.result === 'string' ? event.result : JSON.stringify(event.result)
+          lastResultEvent = event
+        } else if (event.type === 'result') {
+          lastResultEvent = event
         }
         if (text) {
           wf.output.push({ text, isErr: false })
@@ -2323,6 +2474,7 @@ async function queueTick() {
   proc.on('close', async (code) => {
     wf.exitCode = code
     broadcast({ type: 'done', code })
+    if (lastResultEvent) logUsage({ kind: pending.type || 'task', ref: trackPath, ...extractUsage(lastResultEvent) })
     setTimeout(() => runningWorkflows.delete(trackPath), 5 * 60 * 1000)
     queueRunning = null
     console.log(`[Queue] Finished ${pending.type || 'task'}: ${cmd} (exit ${code})`)

@@ -4,3 +4,5 @@ projects/
 mcp_server.json
 queue.json
 chats/
+usage.jsonl
+attachments/

@@ -123,7 +123,26 @@ function MessageBlock({ msg }) {
   return (
     <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>
       <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${ROLE_STYLES[msg.role]} shadow-sm`}>
-        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{msg.content}</pre>
+        {msg.content && (
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{msg.content}</pre>
+        )}
+        {msg.attachments?.length > 0 && (
+          <div className={`flex flex-wrap gap-1.5 ${msg.content ? 'mt-2' : ''}`}>
+            {msg.attachments.map((a, i) => (
+              <span
+                key={i}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-md font-mono ${
+                  msg.role === 'user'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200'
+                }`}
+                title={a.path}
+              >
+                {a.contentType?.startsWith('image/') ? '🖼️' : '📎'} {a.filename}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -190,6 +209,8 @@ export default function Chat() {
   const [toolEvents, setToolEvents] = useState([])
   const [mentionQuery, setMentionQuery] = useState(null)
   const [mentionIndex, setMentionIndex] = useState(0)
+  const [attachments, setAttachments] = useState([]) // [{path, filename, size, contentType, uploading}]
+  const [dragActive, setDragActive] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
 
@@ -320,16 +341,79 @@ export default function Chat() {
   }, [])
 
   function send() {
-    if (!input.trim() || streaming || !activeId) return
+    if ((!input.trim() && attachments.length === 0) || streaming || !activeId) return
+    if (attachments.some(a => a.uploading)) return
     const ws = connect()
-    const message = input.trim()
+    const message = input.trim() || (attachments[0]?.filename ? `Attached: ${attachments.map(a => a.filename).join(', ')}` : '')
+    const sentAttachments = attachments.filter(a => a.path).map(a => ({
+      path: a.path, filename: a.filename, contentType: a.contentType, size: a.size,
+    }))
     setInput('')
+    setAttachments([])
     setStreaming(true)
     setStreamText('')
     setToolEvents([])
-    const dispatch = () => ws.send(JSON.stringify({ action: 'chat-send', chatId: activeId, message }))
+    const dispatch = () => ws.send(JSON.stringify({
+      action: 'chat-send', chatId: activeId, message,
+      ...(sentAttachments.length > 0 ? { attachments: sentAttachments } : {}),
+    }))
     if (ws.readyState === 1) dispatch()
     else ws.addEventListener('open', dispatch, { once: true })
+  }
+
+  async function uploadFiles(files) {
+    const items = Array.from(files).slice(0, 10)
+    const placeholders = items.map(f => ({ filename: f.name, size: f.size, contentType: f.type, uploading: true, _localId: Math.random() }))
+    setAttachments(prev => [...prev, ...placeholders])
+    for (let i = 0; i < items.length; i++) {
+      const file = items[i]
+      const placeholder = placeholders[i]
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
+        const resp = await api.uploadAttachment({ filename: file.name, data: dataUrl, contentType: file.type })
+        setAttachments(prev => prev.map(a => a._localId === placeholder._localId
+          ? { path: resp.path, filename: resp.filename, size: resp.size, contentType: resp.contentType, uploading: false, _localId: a._localId }
+          : a
+        ))
+      } catch (err) {
+        setAttachments(prev => prev.filter(a => a._localId !== placeholder._localId))
+        alert(`Upload failed for ${file.name}: ${err.message}`)
+      }
+    }
+  }
+
+  function removeAttachment(localId) {
+    setAttachments(prev => prev.filter(a => a._localId !== localId))
+  }
+
+  function onDrop(e) {
+    e.preventDefault()
+    setDragActive(false)
+    if (!activeId) return
+    const files = e.dataTransfer?.files
+    if (files && files.length > 0) uploadFiles(files)
+  }
+
+  function onPaste(e) {
+    if (!activeId) return
+    const items = e.clipboardData?.items
+    if (!items) return
+    const files = []
+    for (const item of items) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile()
+        if (f) files.push(f)
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault()
+      uploadFiles(files)
+    }
   }
 
   function stop() {
@@ -489,7 +573,12 @@ export default function Chat() {
       </aside>
 
       {/* Main chat area */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main
+        className={`flex-1 flex flex-col overflow-hidden relative ${dragActive ? 'ring-2 ring-indigo-400 ring-inset' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('Files') && activeId) setDragActive(true) }}
+        onDragLeave={(e) => { if (e.target === e.currentTarget) setDragActive(false) }}
+        onDrop={onDrop}
+      >
         {/* Header */}
         <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex items-center gap-3">
           <button
@@ -549,6 +638,17 @@ export default function Chat() {
             </div>
           )}
         </div>
+
+        {dragActive && (
+          <div className="absolute inset-0 z-40 bg-indigo-500/10 dark:bg-indigo-500/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+            <div className="bg-white dark:bg-gray-900 px-6 py-4 rounded-xl shadow-xl border-2 border-dashed border-indigo-400 text-indigo-700 dark:text-indigo-300 flex items-center gap-3">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <span className="font-medium">Drop file to attach</span>
+            </div>
+          </div>
+        )}
 
         {/* Folder pills */}
         {folderPills.length > 0 && (
@@ -611,13 +711,46 @@ export default function Chat() {
                 onHover={setMentionIndex}
               />
             )}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {attachments.map(a => (
+                  <span key={a._localId} className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-md border ${
+                    a.uploading
+                      ? 'bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400'
+                      : 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
+                  }`}>
+                    <span>{a.contentType?.startsWith('image/') ? '🖼️' : '📎'}</span>
+                    <span className="font-mono truncate max-w-[200px]">{a.filename}</span>
+                    {a.uploading ? (
+                      <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                    ) : (
+                      <button onClick={() => removeAttachment(a._localId)} className="hover:text-red-500" title="Remove">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2 border border-gray-300 dark:border-gray-700 rounded-2xl px-3 py-2 bg-white dark:bg-gray-900 shadow-sm focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 dark:focus-within:ring-indigo-900/40 dark:focus-within:border-indigo-400 transition-all">
+              <label className="cursor-pointer text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors shrink-0 self-end pb-1" title="Attach file">
+                <input type="file" multiple className="hidden" onChange={(e) => { uploadFiles(e.target.files); e.target.value = '' }} />
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </label>
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={onInputChange}
                 onKeyDown={onKeyDown}
-                placeholder={activeId ? "Message... (@ for agents and folders)" : "Create a chat first"}
+                onPaste={onPaste}
+                placeholder={activeId ? "Message... (@ for agents and folders, drop or paste files)" : "Create a chat first"}
                 disabled={!activeId || streaming}
                 rows={1}
                 className="flex-1 resize-none bg-transparent text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none max-h-40"
@@ -634,7 +767,7 @@ export default function Chat() {
               ) : (
                 <button
                   onClick={send}
-                  disabled={!input.trim() || !activeId}
+                  disabled={(!input.trim() && attachments.length === 0) || !activeId || attachments.some(a => a.uploading)}
                   className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white text-xs rounded-lg font-medium transition-colors"
                 >
                   Send

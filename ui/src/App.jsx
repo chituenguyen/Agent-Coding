@@ -8,6 +8,7 @@ import Investigate from './pages/Investigate'
 import Agents from './pages/Agents'
 import Commands from './pages/Commands'
 import Mcp from './pages/Mcp'
+import Usage from './pages/Usage'
 import Settings from './pages/Settings'
 import Onboarding from './components/Onboarding'
 import { useTheme } from './hooks/useTheme'
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/commands" element={<Commands />} />
           <Route path="/mcp" element={<Mcp />} />
+          <Route path="/usage" element={<Usage />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
