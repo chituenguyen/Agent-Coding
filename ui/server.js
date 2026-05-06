@@ -2895,10 +2895,29 @@ wss.on("connection", (ws, req) => {
       const attachmentList = Array.isArray(attachments)
         ? attachments.filter((a) => a?.path && existsSync(a.path)).slice(0, 10)
         : [];
-      const promptForClaude =
+
+      // If the user attached folder pills other than the workspace, surface them
+      // explicitly so the agent treats them as the primary working context.
+      // Without this, --add-dir grants access but the agent's cwd is still
+      // WORKSPACE and "this repo" defaults to agent-coding instead of the
+      // mentioned folder.
+      const userFolders = (chat.folderPaths || []).filter(
+        (p) => p && p !== WORKSPACE && existsSync(p),
+      );
+      const folderContext =
+        userFolders.length > 0
+          ? `[Working folder${userFolders.length > 1 ? "s" : ""}: ${userFolders.join(", ")}]\n` +
+            `When the user says "this repo", "the project", "the codebase", or refers ` +
+            `without a path, treat the folder${userFolders.length > 1 ? "s" : ""} above as the primary target. ` +
+            `(${WORKSPACE} is just where the agent tooling lives.)\n\n`
+          : "";
+
+      const attachmentBlock =
         attachmentList.length > 0
-          ? `${message}\n\nAttached files:\n${attachmentList.map((a) => `- ${a.path}${a.filename ? ` (${a.filename})` : ""}`).join("\n")}`
-          : message;
+          ? `\n\nAttached files:\n${attachmentList.map((a) => `- ${a.path}${a.filename ? ` (${a.filename})` : ""}`).join("\n")}`
+          : "";
+
+      const promptForClaude = folderContext + message + attachmentBlock;
 
       // Persist user message immediately (with attachment metadata)
       const now = new Date().toISOString();
