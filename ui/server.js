@@ -2150,12 +2150,20 @@ app.post("/api/chats", async (req, res) => {
   try {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    const kind = req.body?.kind === "investigate" ? "investigate" : "chat";
+    const ALLOWED_KINDS = ["chat", "investigate", "trading"];
+    const kind = ALLOWED_KINDS.includes(req.body?.kind)
+      ? req.body.kind
+      : "chat";
     const agent =
       typeof req.body?.agent === "string" && req.body.agent.trim()
         ? req.body.agent.trim()
         : null;
-    const title = kind === "investigate" ? "New investigation" : "New chat";
+    const title =
+      kind === "investigate"
+        ? "New investigation"
+        : kind === "trading"
+          ? "New analysis"
+          : "New chat";
     const chat = {
       id,
       title,
