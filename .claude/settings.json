@@ -1,10 +1,16 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "node $CLAUDE_PROJECT_DIR/.claude/hooks/guard-bash.js" }
+          {
+            "type": "command",
+            "command": "node $CLAUDE_PROJECT_DIR/.claude/hooks/guard-bash.js"
+          }
         ]
       }
     ],
@@ -12,14 +18,20 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "node $CLAUDE_PROJECT_DIR/.claude/hooks/auto-format.js" }
+          {
+            "type": "command",
+            "command": "node $CLAUDE_PROJECT_DIR/.claude/hooks/auto-format.js"
+          }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "CLAUDE_HOOK_EVENT=SubagentStop node $CLAUDE_PROJECT_DIR/.claude/hooks/notify.js" }
+          {
+            "type": "command",
+            "command": "CLAUDE_HOOK_EVENT=SubagentStop node $CLAUDE_PROJECT_DIR/.claude/hooks/notify.js"
+          }
         ]
       }
     ]

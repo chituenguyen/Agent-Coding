@@ -56,16 +56,16 @@ ORCHESTRATOR (Main Session)
 
 ### Agent Souls
 
-| Agent               | Soul                                              | Model  | Role                                           |
-| ------------------- | ------------------------------------------------- | ------ | ---------------------------------------------- |
-| **Architect**       | "Designing systems is my passion"                 | sonnet | Analyze requirements, write SPEC.md            |
-| **Researcher**      | "Knowledge is power"                              | sonnet | Research docs, libraries, best practices       |
-| **Coder Backend**   | "Clean, efficient code is art"                    | sonnet | Implement backend — API, DB, services          |
-| **Coder Frontend**  | "Beautiful UI is a conversation between design and code" | sonnet | Implement UI, verify with browser MCP |
-| **Reviewer**        | "Code quality is non-negotiable"                  | sonnet | Review code, approve or reject                 |
-| **Debugger**        | "Bugs fear me"                                    | sonnet | Fix issues found by Reviewer                   |
-| **Investigator**    | "Every bug has a birth certificate — I find it"   | sonnet | Interactive root cause investigation (on-demand) |
-| **Learner**         | "Every task is a lesson"                          | haiku  | Extract learnings, update context.md           |
+| Agent              | Soul                                                     | Model  | Role                                             |
+| ------------------ | -------------------------------------------------------- | ------ | ------------------------------------------------ |
+| **Architect**      | "Designing systems is my passion"                        | sonnet | Analyze requirements, write SPEC.md              |
+| **Researcher**     | "Knowledge is power"                                     | sonnet | Research docs, libraries, best practices         |
+| **Coder Backend**  | "Clean, efficient code is art"                           | sonnet | Implement backend — API, DB, services            |
+| **Coder Frontend** | "Beautiful UI is a conversation between design and code" | sonnet | Implement UI, verify with browser MCP            |
+| **Reviewer**       | "Code quality is non-negotiable"                         | sonnet | Review code, approve or reject                   |
+| **Debugger**       | "Bugs fear me"                                           | sonnet | Fix issues found by Reviewer                     |
+| **Investigator**   | "Every bug has a birth certificate — I find it"          | sonnet | Interactive root cause investigation (on-demand) |
+| **Learner**        | "Every task is a lesson"                                 | haiku  | Extract learnings, update context.md             |
 
 Model is set via `model` parameter on `Agent()` — overrides agent definition frontmatter. Learner uses haiku (lightweight task). All others use sonnet. Orchestrator can override per-task if needed (e.g. `model="opus"` for complex architecture).
 
@@ -115,12 +115,14 @@ Interactive bug root cause investigation — **not part of the automated workflo
 ```
 
 **Flow:**
+
 1. User describes the bug (description, error, reproduction steps)
 2. Investigator searches the codebase and traces the call chain
 3. Returns a Root Cause Report with file:line causal chain
 4. Optionally fixes the bug if user asks (`--fix` or follow-up message)
 
 **Difference from Debugger:**
+
 - `Investigator` — on-demand, conversational, finds root cause of bugs the user describes
 - `Debugger` — automated workflow agent, fixes issues listed in `review/issues.md`
 
@@ -149,11 +151,61 @@ Manage a task queue — add multiple tasks, process them sequentially:
 ```
 
 **Behavior:**
+
 - Sequential — one task at a time
 - On fail — marks task as failed, continues to next
 - All fail — stops the queue
 - Live add — can add tasks while queue is running (re-reads `queue.json` each iteration)
 - State stored in `queue.json` at workspace root
+
+---
+
+## Sub-agents vs Agent Teams
+
+This workspace supports **two parallelization patterns**:
+
+### Sub-agents (default, used by `/workflow`)
+
+Spawned via the `Agent()` / `Task` tool. Each sub-agent runs in its own context window and **reports results back** to the main session. They do NOT talk to each other — the orchestrator routes between them.
+
+Best for: focused tasks where only the result matters (architect → spec, coder → code, reviewer → verdict).
+
+### Agent Teams (experimental, on-demand)
+
+Multiple Claude Code **sessions** running in parallel that share a task list and a mailbox — teammates can message each other directly. The lead session coordinates, teammates work independently, you can talk to any teammate.
+
+Enabled via `.claude/settings.json`:
+
+```json
+{ "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" } }
+```
+
+Best for:
+
+- **Parallel code review** — security / performance / test-coverage reviewers debating a PR
+- **Competing-hypothesis debugging** — 3-5 teammates each take a different theory and challenge each other
+- **Cross-layer features** — BE / FE / DB owned by different teammates simultaneously
+
+To start a team, in an interactive `claude` session inside this workspace:
+
+```
+Create an agent team to review PR #142. Spawn three reviewers:
+- one focused on security implications
+- one checking performance impact
+- one validating test coverage
+Have them each review and report findings.
+```
+
+Reuse existing sub-agent definitions as teammate types (architect, reviewer, debugger, finance, investigator…) — the frontmatter `model`, `effort`, `tools` allowlist all carry over.
+
+Display modes:
+
+- **in-process** (default): teammates run in the lead's terminal, Shift+Down cycles between them
+- **split-pane**: each teammate gets a tmux/iTerm2 pane (`claude --teammate-mode tmux`)
+
+Cleanup: ask the lead "clean up the team" when done. Team config lives at `~/.claude/teams/{team-name}/config.json`.
+
+Note: Agent Teams require **interactive** Claude Code sessions (terminal). The web UI's `/chat`, `/investigate`, `/trading` use single-shot `claude -p` and continue to use sub-agents via `--agent` + `Task` tool.
 
 ---
 
@@ -282,14 +334,14 @@ agent-coding/
 
 ## Workflow Stages
 
-| Stage | Agents                          | Parallel?        | Output                                    |
-| ----- | ------------------------------- | ---------------- | ----------------------------------------- |
-| 1     | Architect, Researcher           | Yes              | SPEC.md (with task type) + research/      |
-| 2     | Coder Backend and/or Frontend   | Yes (full-stack, worktree isolated) | backend-summary.md + frontend-summary.md  |
-| 3     | Reviewer                        | No               | approval.md or issues.md                  |
-| 4     | Debugger (if needed)            | No               | Fixed code + fix-log.md                   |
-| 5     | Orchestrator                    | No               | Git commit + commit.md                    |
-| 6     | Learner                         | No               | Updated projects/[name]/context.md        |
+| Stage | Agents                        | Parallel?                           | Output                                   |
+| ----- | ----------------------------- | ----------------------------------- | ---------------------------------------- |
+| 1     | Architect, Researcher         | Yes                                 | SPEC.md (with task type) + research/     |
+| 2     | Coder Backend and/or Frontend | Yes (full-stack, worktree isolated) | backend-summary.md + frontend-summary.md |
+| 3     | Reviewer                      | No                                  | approval.md or issues.md                 |
+| 4     | Debugger (if needed)          | No                                  | Fixed code + fix-log.md                  |
+| 5     | Orchestrator                  | No                                  | Git commit + commit.md                   |
+| 6     | Learner                       | No                                  | Updated projects/[name]/context.md       |
 
 ---
 
@@ -309,7 +361,7 @@ Applies to all agents when executing tasks.
 - **No abstractions** for single-use code
 - **No flexibility/configurability** unless requested
 - **No error handling** for impossible scenarios
-- Ask: *"Would a senior engineer say this is overcomplicated?"* If yes, simplify
+- Ask: _"Would a senior engineer say this is overcomplicated?"_ If yes, simplify
 
 ### 3. Surgical Changes
 
