@@ -2955,6 +2955,7 @@ wss.on("connection", (ws, req) => {
         "--output-format",
         "stream-json",
         "--verbose",
+        "--include-partial-messages",
         "--dangerously-skip-permissions",
       ];
       if (chat.sessionId) {
@@ -3038,11 +3039,28 @@ wss.on("connection", (ws, req) => {
             }
             if (event.type === "result") lastResultEvent = event;
 
+            // Real-time character-level streaming from --include-partial-messages.
+            // Each `stream_event` carries an Anthropic SSE-style sub-event; the
+            // text_delta variant is what we want to forward to the UI.
+            if (event.type === "stream_event") {
+              const sub = event.event;
+              if (
+                sub?.type === "content_block_delta" &&
+                sub.delta?.type === "text_delta" &&
+                sub.delta.text
+              ) {
+                safeSend({ type: "chat-delta", text: sub.delta.text });
+              }
+              continue;
+            }
+
+            // Final per-turn assistant event: capture full text for persistence
+            // and surface tool_use blocks. Do NOT re-emit chat-delta here — the
+            // partial stream_events already streamed every character.
             if (event.type === "assistant" && event.message?.content) {
               for (const block of event.message.content) {
                 if (block.type === "text" && block.text) {
                   assistantText += block.text;
-                  safeSend({ type: "chat-delta", text: block.text });
                 } else if (block.type === "tool_use") {
                   safeSend({
                     type: "chat-tool",
