@@ -8,6 +8,7 @@ This is an **interactive, on-demand** command — not part of the automated work
 ## When to Use
 
 When the user says:
+
 - "/investigate [bug description]"
 - "investigate this bug: ..."
 - "tìm root cause của bug này..."
@@ -26,7 +27,7 @@ When the user says:
 ### Step 1 — Collect bug info
 
 If the user provided a description inline, use it.
-If not, ask the user: *"Describe the bug — what happens vs what you expect, and how to trigger it?"*
+If not, ask the user: _"Describe the bug — what happens vs what you expect, and how to trigger it?"_
 
 ### Step 2 — Resolve target repo
 
@@ -91,14 +92,14 @@ Return a Root Cause Report directly in your response:
 ### Step 4 — Present findings
 
 Return the Investigator's Root Cause Report to the user.
-Ask: *"Want me to fix this?"* — if yes, spawn the Debugger agent or handle inline.
+Ask: _"Want me to fix this?"_ — if yes, spawn the Debugger agent or handle inline.
 
 ### Step 5 — Run code (if `--run` provided)
 
 After presenting the Root Cause Report, execute code to verify the bug or validate a fix:
 
 1. **Detect run command** — check for `package.json` (scripts), `Makefile`, `pyproject.toml`, `go.mod`, etc. in the target repo to determine how to run tests or the app.
-2. **Ask if ambiguous** — if multiple run targets exist, ask the user: *"Which command should I run? e.g. `npm test`, `make test`, `pytest`"*
+2. **Ask if ambiguous** — if multiple run targets exist, ask the user: _"Which command should I run? e.g. `npm test`, `make test`, `pytest`"_
 3. **Run and report** — execute the command with `Bash`, capture output, and present:
    - Pass/fail result
    - Relevant stdout/stderr lines (filter noise)
@@ -113,11 +114,13 @@ bash_result = Bash(command=f"cd {target_path} && {run_command}", timeout=60000)
 
 ## Options
 
-| Option | Description |
-|--------|-------------|
-| `--target <path>` | Path to the repo to investigate (default: cwd) |
-| `--fix` | After finding root cause, also fix the bug |
-| `--run [cmd]` | After investigation (and optional fix), run code to verify. If `cmd` is omitted, auto-detect from project files. |
+| Option                  | Description                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--target <path>`       | Path to the repo to investigate (default: cwd)                                                                                                                                                                                                                                                                                                                                 |
+| `--fix`                 | After finding root cause, also fix the bug                                                                                                                                                                                                                                                                                                                                     |
+| `--run [cmd]`           | After investigation (and optional fix), run code to verify. If `cmd` is omitted, auto-detect from project files.                                                                                                                                                                                                                                                               |
+| `--team`                | When combined with `--fix`, hand the fix off to `/team-workflow` (parallel FE + BE + DevOps teammates) instead of letting the investigator patch it inline. Use for cross-layer bugs.                                                                                                                                                                                          |
+| `--context-file <path>` | Read the bug description (and optionally a prior investigation transcript) from a markdown file instead of relying on the inline quoted argument. Used by the queue worker to forward the packaged context of a UI-driven investigation. When present, treat the file's contents as the **primary** bug description, and use the inline quoted argument only as a short title. |
 
 ## Example
 

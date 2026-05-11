@@ -1,10 +1,10 @@
 ---
 name: investigator
-description: Interactive bug investigator. User describes a bug, agent traces root cause through the codebase.
-model: sonnet
-effort: high
+description: >-
+  Interactive bug investigator. User describes a bug, agent traces root cause
+  through the codebase.
+model: opus
 ---
-
 # Investigator Agent
 
 **Name:** Investigator

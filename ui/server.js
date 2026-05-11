@@ -137,7 +137,33 @@ function parseInputMd(content) {
     created: get("Created"),
     description: getDescription(),
     targetPath: get("Path"),
+    companyId: get("Company") || null,
   };
+}
+
+// Build a map of repo path (or any prefix) → companyId from companies.json.
+// Used to infer which company owns a task/queue item that lacks an explicit
+// companyId (e.g. legacy items created before the field existed).
+async function getCompanyForPath(targetPath) {
+  if (!targetPath) return null;
+  try {
+    const raw = await readFile(path.join(WORKSPACE, "companies.json"), "utf8");
+    const data = JSON.parse(raw);
+    const normalized = String(targetPath).replace(/\/+$/, "");
+    for (const co of data.companies || []) {
+      for (const room of co.rooms || []) {
+        for (const team of room.teams || []) {
+          for (const repo of team.repos || []) {
+            const r = String(repo).replace(/\/+$/, "");
+            if (normalized === r || normalized.startsWith(r + "/")) {
+              return co.id;
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
 }
 
 // ─── tasks ──────────────────────────────────────────────────────────────────
@@ -147,6 +173,7 @@ app.get("/api/tasks", async (req, res) => {
     const tasksDir = path.join(WORKSPACE, "tasks");
     if (!existsSync(tasksDir)) return res.json([]);
 
+    const wantCompany = req.query.companyId || null;
     const projects = await readdir(tasksDir);
     const tasks = [];
 
@@ -164,6 +191,10 @@ app.get("/api/tasks", async (req, res) => {
         const inputContent = await readIfExists(path.join(taskDir, "input.md"));
         const meta = inputContent ? parseInputMd(inputContent) : {};
 
+        const companyId =
+          meta.companyId || (await getCompanyForPath(meta.targetPath));
+        if (wantCompany && companyId !== wantCompany) continue;
+
         const taskPath = `tasks/${project}/${taskId}`;
         const fsStatus = deriveStatus(taskDir);
         // Cross-reference with running workflows + queue for real-time status
@@ -175,6 +206,7 @@ app.get("/api/tasks", async (req, res) => {
         tasks.push({
           taskId,
           project,
+          companyId,
           description: meta.description || taskId,
           created: meta.created || "",
           targetPath: meta.targetPath || "",
@@ -591,6 +623,11 @@ app.post("/api/tasks", async (req, res) => {
     if (!description?.trim())
       return res.status(400).json({ error: "description required" });
 
+    const companyId =
+      (typeof req.body?.companyId === "string" && req.body.companyId) ||
+      (await getCompanyForPath(targetPath)) ||
+      null;
+
     const project = targetPath
       ? path
           .basename(targetPath)
@@ -670,7 +707,7 @@ app.post("/api/tasks", async (req, res) => {
       `# Task Input
 
 **Task ID:** ${taskId}
-**Project:** ${project}
+**Project:** ${project}${companyId ? `\n**Company:** ${companyId}` : ""}
 **Created:** ${now.toISOString()}
 **Description:** ${description}
 
@@ -728,7 +765,12 @@ ${description}
       }
     }
 
-    res.json({ taskId, project, taskDir: `tasks/${project}/${taskId}` });
+    res.json({
+      taskId,
+      project,
+      companyId,
+      taskDir: `tasks/${project}/${taskId}`,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -916,6 +958,46 @@ async function getRepos() {
     }
   }
   return data.repositories || [];
+}
+
+// Companies / rooms / teams — describes the multi-tenant org structure shown
+// on the homepage. Backed by companies.json at workspace root. Each team
+// declares its own repo allowlist so subagent runs can be constrained.
+app.get("/api/companies", async (req, res) => {
+  try {
+    const raw = await readFile(path.join(WORKSPACE, "companies.json"), "utf8");
+    const data = JSON.parse(raw);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/companies/:companyId", async (req, res) => {
+  try {
+    const raw = await readFile(path.join(WORKSPACE, "companies.json"), "utf8");
+    const data = JSON.parse(raw);
+    const company = (data.companies || []).find(
+      (c) => c.id === req.params.companyId,
+    );
+    if (!company) return res.status(404).json({ error: "Company not found" });
+    res.json(company);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function findTeam(companyId, teamId) {
+  const raw = await readFile(path.join(WORKSPACE, "companies.json"), "utf8");
+  const data = JSON.parse(raw);
+  const company = (data.companies || []).find((c) => c.id === companyId);
+  if (!company) return null;
+  for (const room of company.rooms || []) {
+    for (const team of room.teams || []) {
+      if (team.id === teamId) return { company, room, team };
+    }
+  }
+  return null;
 }
 
 app.get("/api/repositories", async (req, res) => {
@@ -1200,7 +1282,18 @@ async function writeQueue(data) {
 
 app.get("/api/queue", async (req, res) => {
   try {
-    res.json(await readQueue());
+    const queue = await readQueue();
+    const wantCompany = req.query.companyId || null;
+    if (!wantCompany) return res.json(queue);
+    // Filter by companyId. For legacy items missing the field, infer from
+    // target / task_path so they don't disappear entirely.
+    const filtered = [];
+    for (const t of queue.tasks || []) {
+      let cid = t.companyId || null;
+      if (!cid) cid = await getCompanyForPath(t.target || "");
+      if (cid === wantCompany) filtered.push({ ...t, companyId: cid });
+    }
+    res.json({ ...queue, tasks: filtered });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1217,9 +1310,15 @@ app.post("/api/queue/add", async (req, res) => {
       task_path,
       fix_path,
       subtask_path,
+      workflow,
+      companyId,
     } = req.body;
     if (!description?.trim())
       return res.status(400).json({ error: "description required" });
+    const cid =
+      (typeof companyId === "string" && companyId) ||
+      (await getCompanyForPath(target)) ||
+      null;
     const queue = await readQueue();
     queue.tasks.push({
       description: description.trim(),
@@ -1231,6 +1330,8 @@ app.post("/api/queue/add", async (req, res) => {
       task_path: task_path || null, // for fix/subtask: parent task path
       fix_path: fix_path || null, // for type='fix'
       subtask_path: subtask_path || null, // for type='subtask'
+      workflow: workflow === "team" ? "team" : "sequential", // /workflow vs /team-workflow
+      companyId: cid,
       added_at: new Date().toISOString(),
       finished_at: null,
       error: null,
@@ -2202,6 +2303,7 @@ app.get("/api/chats", async (req, res) => {
     await ensureChatsDir();
     const files = await readdir(chatsDir());
     const wantKind = req.query.kind || "chat";
+    const wantCompany = req.query.companyId || null;
     const chats = await Promise.all(
       files
         .filter((f) => f.endsWith(".json"))
@@ -2212,11 +2314,15 @@ app.get("/api/chats", async (req, res) => {
             );
             const kind = c.kind || "chat";
             if (kind !== wantKind) return null;
+            if (wantCompany && (c.companyId || null) !== wantCompany)
+              return null;
             return {
               id: c.id,
               title: c.title,
               kind,
               agent: c.agent || null,
+              companyId: c.companyId || null,
+              teamId: c.teamId || null,
               createdAt: c.createdAt,
               updatedAt: c.updatedAt,
               messageCount: (c.messages || []).length,
@@ -2240,28 +2346,55 @@ app.post("/api/chats", async (req, res) => {
   try {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    const ALLOWED_KINDS = ["chat", "investigate", "trading"];
+    const ALLOWED_KINDS = ["chat", "investigate", "trading", "team"];
     const kind = ALLOWED_KINDS.includes(req.body?.kind)
       ? req.body.kind
       : "chat";
-    const agent =
+    let agent =
       typeof req.body?.agent === "string" && req.body.agent.trim()
         ? req.body.agent.trim()
         : null;
-    const title =
+    let folderPaths = [WORKSPACE];
+    let companyId = null;
+    let teamId = null;
+    let title =
       kind === "investigate"
         ? "New investigation"
         : kind === "trading"
           ? "New analysis"
           : "New chat";
+    // Team chat: hydrate from companies.json so the team's agent + repo
+    // allowlist are baked into the chat record up-front.
+    if (
+      kind === "team" &&
+      typeof req.body?.companyId === "string" &&
+      typeof req.body?.teamId === "string"
+    ) {
+      const found = await findTeam(req.body.companyId, req.body.teamId);
+      if (!found) return res.status(404).json({ error: "Team not found" });
+      companyId = found.company.id;
+      teamId = found.team.id;
+      agent = found.team.agent || agent;
+      const teamRepos = (found.team.repos || []).filter((p) => existsSync(p));
+      folderPaths = teamRepos.length > 0 ? teamRepos : [WORKSPACE];
+      title = `${found.company.name} · ${found.team.name}`;
+    } else if (
+      typeof req.body?.companyId === "string" &&
+      req.body.companyId.trim()
+    ) {
+      // Non-team chats (chat / investigate) scoped to a company.
+      companyId = req.body.companyId.trim();
+    }
     const chat = {
       id,
       title,
       kind,
       agent,
+      companyId,
+      teamId,
       sessionId: null,
       model: "sonnet",
-      folderPaths: [WORKSPACE],
+      folderPaths,
       createdAt: now,
       updatedAt: now,
       messages: [],
@@ -3430,23 +3563,44 @@ async function queueTick() {
     trackPath = pending.subtask_path;
     cmd = `/sub-task ${pending.task_path} ${pending.subtask_path}`;
   } else if (pending.type === "investigate") {
-    taskPath = null;
     trackPath = `investigate-${Date.now()}`;
-    const desc = pending.description.replace(
+    taskPath = null;
+    // Strip the [--flag] tokens we appended in the UI.
+    const fullDesc = pending.description.replace(
       /\s*\[--\w+(?:\s+"[^"]*")?\]/g,
       "",
     );
-    cmd = `/investigate "${desc}"`;
+    // Short inline summary safe to pass as a quoted slash-command arg.
+    const inline =
+      fullDesc
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean)[0]
+        ?.slice(0, 200)
+        ?.replace(/["\\]/g, "")
+        ?.trim() || "investigate from queue";
+    // Always write the full packaged context (multi-line, may contain quotes)
+    // to a sidecar markdown file so /investigate can read it without us having
+    // to shell-escape every edge case.
+    const ctxDir = path.join(WORKSPACE, "tasks", "__investigations");
+    await mkdir(ctxDir, { recursive: true });
+    const ctxFile = path.join(ctxDir, `${trackPath}.md`);
+    await writeFile(ctxFile, fullDesc);
+    const relCtxFile = path.relative(WORKSPACE, ctxFile);
+    cmd = `/investigate "${inline}" --context-file ${relCtxFile}`;
     if (pending.target) cmd += ` --target ${pending.target}`;
     if (pending.description.includes("[--fix]")) cmd += " --fix";
     const runMatch = pending.description.match(/\[--run(?:\s+"([^"]*)")?\]/);
     if (runMatch) cmd += runMatch[1] ? ` --run "${runMatch[1]}"` : " --run";
+    if (pending.workflow === "team") cmd += " --team";
   } else {
-    // type = 'task' — run workflow
+    // type = 'task' — run workflow. `pending.workflow` is set when the user
+    // chose team-workflow at task creation; default falls back to /workflow.
     taskPath =
       pending.task_path || `tasks/${pending.project}/${pending.task_id}`;
     trackPath = taskPath;
-    cmd = `/workflow ${taskPath}`;
+    const wfCmd = pending.workflow === "team" ? "/team-workflow" : "/workflow";
+    cmd = `${wfCmd} ${taskPath}`;
   }
 
   const targetDir =

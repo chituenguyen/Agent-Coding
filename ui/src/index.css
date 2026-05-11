@@ -2,12 +2,104 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens — warm-cream palette inspired by Cofounder.
+   Applied to elements with .cofounder-skin or to the whole Chat page. */
+/* Channel-only RGB tokens so Tailwind's <alpha-value> modifier
+   (e.g. bg-co-fg/[0.06]) can mix opacity at the utility level. */
+:root {
+  --co-bg-rgb: 241 241 238;
+  --co-surface-rgb: 251 251 248;
+  --co-surface-l2-rgb: 233 233 227;
+  --co-fg-rgb: 32 32 32;
+  --co-primary-rgb: 32 32 32;
+  --co-primary-fg-rgb: 241 241 238;
+  --co-accent-rgb: 165 189 57;
+  --co-success-rgb: 81 182 127;
+  --co-destructive-rgb: 235 77 77;
+}
+.dark {
+  --co-bg-rgb: 22 22 19;
+  --co-surface-rgb: 27 27 24;
+  --co-surface-l2-rgb: 35 35 32;
+  --co-fg-rgb: 241 241 238;
+  --co-primary-rgb: 241 241 238;
+  --co-primary-fg-rgb: 32 32 32;
+}
+
+.cofounder-skin {
+  font-family:
+    "Figtree",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  background: rgb(var(--co-bg-rgb));
+  color: rgb(var(--co-fg-rgb));
+  font-feature-settings: "ss01", "cv11";
+}
+.cofounder-skin code,
+.cofounder-skin pre,
+.cofounder-skin .font-mono {
+  font-family:
+    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, "Courier New",
+    monospace;
+}
+
+/* MarkdownContent + FileEditCard reuse shared Tailwind gray classes for tables
+   and code-block chrome. Re-skin them only inside the cofounder-skin scope,
+   so /investigate and /trading keep their original appearance. */
+.cofounder-skin .relative.group.my-2.rounded-lg {
+  border-color: rgb(var(--co-fg-rgb) / 0.1);
+}
+.cofounder-skin .relative.group.my-2.rounded-lg > div:first-child {
+  background-color: rgb(var(--co-fg-rgb) / 0.04);
+  border-color: rgb(var(--co-fg-rgb) / 0.08);
+}
+.cofounder-skin .relative.group.my-2.rounded-lg > div:first-child span {
+  color: rgb(var(--co-fg-rgb) / 0.6);
+}
+.cofounder-skin .relative.group.my-2.rounded-lg > div:first-child button {
+  color: rgb(var(--co-fg-rgb) / 0.5);
+}
+.cofounder-skin .relative.group.my-2.rounded-lg > div:first-child button:hover {
+  color: rgb(var(--co-fg-rgb));
+}
+.cofounder-skin table {
+  border-color: rgb(var(--co-fg-rgb) / 0.1);
+}
+.cofounder-skin table th {
+  background-color: rgb(var(--co-fg-rgb) / 0.04);
+  color: rgb(var(--co-fg-rgb));
+  border-color: rgb(var(--co-fg-rgb) / 0.1);
+}
+.cofounder-skin table td {
+  color: rgb(var(--co-fg-rgb));
+  border-color: rgb(var(--co-fg-rgb) / 0.08);
+}
+.cofounder-skin blockquote {
+  border-color: rgb(var(--co-fg-rgb) / 0.2);
+  color: rgb(var(--co-fg-rgb) / 0.7);
+}
+.cofounder-skin :not(pre) > code {
+  background-color: rgb(var(--co-fg-rgb) / 0.06);
+  color: rgb(var(--co-fg-rgb));
+}
+.cofounder-skin hr {
+  border-color: rgb(var(--co-fg-rgb) / 0.1);
+}
+
 /* Prevent Brave/browser dark mode from forcing styles on pre/code/textarea */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   forced-color-adjust: none;
 }
 
-pre, code, textarea, input, select {
+pre,
+code,
+textarea,
+input,
+select {
   color-scheme: normal;
 }
 

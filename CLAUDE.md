@@ -97,12 +97,45 @@ Check task completion status:
 
 ### `/workflow [task-id]`
 
-Spawn agents in sequence — **this actually runs agents**:
+Spawn agents in **sequence** — **this actually runs agents**:
 
 ```
 /workflow 20260421-143300-write-api-user-service
 /workflow --new "Task description" --target /path/to/repo
 ```
+
+### `/team-workflow [task-id]`
+
+Same intent as `/workflow` but uses **Agent Teams** — Frontend, Backend,
+DevOps run as parallel teammates that `SendMessage` each other directly.
+Architect plans + writes lane assignments, Reviewer gates at the end.
+
+Best when a task naturally crosses team boundaries (FE+BE contract,
+service+k8s manifest). Reuses the engineer room composition from
+`companies.json`.
+
+```
+/team-workflow 20260508-...
+/team-workflow --new "..." --target /path/to/repo
+/team-workflow [task-id] --teams frontend,backend  # subset
+```
+
+Spawn shape (lead session, single tool-use turn for Stage B):
+
+```python
+TeamCreate(name="qualgo-engineer-...")
+Agent(name="Architect", subagent_type="architect", team_name=..., run_in_background=false)
+# wait, read team-board.md, then in parallel:
+Agent(name="Frontend", subagent_type="coder-frontend", team_name=..., run_in_background=true, isolation="worktree")
+Agent(name="Backend",  subagent_type="coder-backend",  team_name=..., run_in_background=true, isolation="worktree")
+Agent(name="DevOps",   subagent_type="devops",         team_name=..., run_in_background=true, isolation="worktree")
+# wait for all
+Agent(name="Reviewer", subagent_type="reviewer", team_name=..., run_in_background=false)
+TeamDelete(name=...)
+```
+
+See `.claude/skills/team-workflow/SKILL.md` for the full protocol and
+`team-board.md` template.
 
 ### `/investigate "bug description" [--target /path/to/repo]`
 

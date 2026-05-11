@@ -11,6 +11,9 @@ import Mcp from "./pages/Mcp";
 import Usage from "./pages/Usage";
 import Trading from "./pages/Trading";
 import Settings from "./pages/Settings";
+import Home from "./pages/Home";
+import Company from "./pages/Company";
+import TeamChat from "./pages/TeamChat";
 import Onboarding from "./components/Onboarding";
 import { useTheme } from "./hooks/useTheme";
 
@@ -22,7 +25,12 @@ export default function App() {
       <Sidebar theme={theme} setTheme={setTheme} />
       <main className="flex-1 overflow-y-auto pt-12 md:pt-0">
         <Routes>
-          <Route path="/" element={<Navigate to="/tasks" replace />} />
+          <Route path="/" element={<Home />} />
+          <Route path="/co/:companyId" element={<Company />} />
+          <Route path="/co/:companyId/team/:teamId" element={<TeamChat />} />
+          <Route path="/co/:companyId/tasks" element={<Tasks />} />
+          <Route path="/co/:companyId/queue" element={<Queue />} />
+          <Route path="/co/:companyId/investigate" element={<Investigate />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/tasks/:project/:taskId" element={<TaskDetail />} />
           <Route path="/queue" element={<Queue />} />

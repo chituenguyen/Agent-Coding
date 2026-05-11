@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
@@ -232,10 +232,19 @@ function StreamingBubble({ toolEvents, streamText }) {
   );
 }
 
-function PushModal({ defaultDescription, defaultTarget, onCancel, onConfirm }) {
-  const [desc, setDesc] = useState(defaultDescription || "");
+function PushModal({
+  packagedDescription,
+  defaultTarget,
+  bugSummary,
+  rootCausePreview,
+  onCancel,
+  onConfirm,
+}) {
   const [target, setTarget] = useState(defaultTarget || "");
   const [autoFix, setAutoFix] = useState(true);
+  const [workflow, setWorkflow] = useState("sequential");
+  const [showContext, setShowContext] = useState(false);
+  const [desc, setDesc] = useState(packagedDescription || "");
 
   return (
     <div
@@ -251,26 +260,69 @@ function PushModal({ defaultDescription, defaultTarget, onCancel, onConfirm }) {
             Push to queue
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            Queue worker will run{" "}
+            The investigation transcript will be sent as-is to{" "}
             <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">
               /investigate
-            </code>{" "}
-            with this description.
+            </code>
+            .
           </p>
         </div>
         <div className="p-5 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              Bug description
-            </label>
-            <textarea
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              rows={5}
-              className="w-full text-sm border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
-              placeholder="Refined bug description (root cause if known)..."
-            />
+          {/* Investigation summary — read-only by default */}
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-950/50">
+            <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">
+                Original report
+              </div>
+              <div className="text-sm text-gray-800 dark:text-gray-200 line-clamp-2">
+                {bugSummary || "(no user message yet)"}
+              </div>
+            </div>
+            {rootCausePreview && (
+              <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+                <div className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-0.5">
+                  Investigator's conclusion
+                </div>
+                <div className="text-sm text-gray-800 dark:text-gray-200 line-clamp-3 whitespace-pre-wrap">
+                  {rootCausePreview}
+                </div>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowContext((v) => !v)}
+              className="w-full px-3 py-2 text-left text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 flex items-center justify-between"
+            >
+              <span>
+                {showContext ? "Hide" : "Edit"} packaged context (full
+                transcript · {desc.length.toLocaleString()} chars)
+              </span>
+              <svg
+                className={`w-3 h-3 transition-transform ${showContext ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+            {showContext && (
+              <div className="px-3 pb-3">
+                <textarea
+                  value={desc}
+                  onChange={(e) => setDesc(e.target.value)}
+                  rows={10}
+                  className="w-full text-xs font-mono border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 dark:text-gray-100 rounded-md px-2 py-1.5 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-y"
+                />
+              </div>
+            )}
           </div>
+
           <div>
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
               Target folder
@@ -302,6 +354,83 @@ function PushModal({ defaultDescription, defaultTarget, onCancel, onConfirm }) {
               </div>
             </div>
           </label>
+
+          {/* Workflow picker — sequential vs team (only meaningful when auto-fix) */}
+          <div className={autoFix ? "" : "opacity-50 pointer-events-none"}>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
+              Fix workflow
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setWorkflow("sequential")}
+                className={`text-left px-3 py-2.5 rounded-lg border transition-colors ${
+                  workflow !== "team"
+                    ? "border-amber-500 bg-amber-50 dark:bg-amber-900/30 dark:border-amber-400"
+                    : "border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    Sequential
+                  </span>
+                  {workflow !== "team" && (
+                    <svg
+                      className="w-4 h-4 text-amber-600 dark:text-amber-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                  <code className="font-mono">/workflow</code> — Architect →
+                  Coder → Reviewer
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setWorkflow("team")}
+                className={`text-left px-3 py-2.5 rounded-lg border transition-colors ${
+                  workflow === "team"
+                    ? "border-amber-500 bg-amber-50 dark:bg-amber-900/30 dark:border-amber-400"
+                    : "border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    Team
+                  </span>
+                  {workflow === "team" && (
+                    <svg
+                      className="w-4 h-4 text-amber-600 dark:text-amber-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                  <code className="font-mono">/team-workflow</code> — FE + BE +
+                  DevOps in parallel
+                </p>
+              </button>
+            </div>
+          </div>
         </div>
         <div className="px-5 py-3 bg-gray-50 dark:bg-gray-950 border-t border-gray-100 dark:border-gray-800 flex justify-end gap-2">
           <button
@@ -316,6 +445,7 @@ function PushModal({ defaultDescription, defaultTarget, onCancel, onConfirm }) {
                 description: desc.trim(),
                 target: target.trim(),
                 autoFix,
+                workflow: workflow === "team" ? "team" : "sequential",
               })
             }
             disabled={!desc.trim()}
@@ -356,18 +486,22 @@ export default function Investigate() {
   const [fileEdits, setFileEdits] = useState([]);
   const [livePanelOpen, setLivePanelOpen] = useState(false);
   const navigate = useNavigate();
+  const { companyId } = useParams();
 
   useEffect(() => {
+    setActiveId(null);
+    setActiveChat(null);
     refreshChats();
     api
       .getRepositories()
       .then(setRepos)
       .catch(() => {});
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
 
   async function refreshChats() {
     try {
-      const list = await api.getChats("investigate");
+      const list = await api.getChats("investigate", companyId);
       setChats(list);
       if (!activeId && list.length > 0) selectChat(list[0].id);
     } catch {}
@@ -400,6 +534,7 @@ export default function Investigate() {
     const c = await api.createChat({
       kind: "investigate",
       agent: "investigator",
+      ...(companyId ? { companyId } : {}),
     });
     setChats((prev) => [c, ...prev]);
     selectChat(c.id);
@@ -750,7 +885,7 @@ export default function Investigate() {
     }
   }
 
-  async function handlePush({ description, target, autoFix }) {
+  async function handlePush({ description, target, autoFix, workflow }) {
     setPushState("loading");
     try {
       let fullDesc = description;
@@ -759,12 +894,14 @@ export default function Investigate() {
         description: fullDesc,
         target: target || undefined,
         type: "investigate",
+        workflow: workflow === "team" ? "team" : "sequential",
+        ...(companyId ? { companyId } : {}),
       });
       setPushState("done");
       setPushOpen(false);
       setTimeout(() => {
         setPushState("idle");
-        navigate("/queue");
+        navigate(companyId ? `/co/${companyId}/queue` : "/queue");
       }, 800);
     } catch {
       setPushState("idle");
@@ -775,6 +912,20 @@ export default function Investigate() {
   const messages = activeChat?.messages || [];
   const currentModel = activeChat?.model || "sonnet";
   const firstUserMsg = messages.find((m) => m.role === "user")?.content || "";
+  const lastAssistantMsg =
+    [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
+  // Package the whole investigation as a single description so the queue worker
+  // sees the original report AND the root-cause analysis without the user
+  // having to retype anything.
+  const packagedDescription = messages.length
+    ? messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map(
+          (m) =>
+            `## ${m.role === "user" ? "User" : "Investigator"}\n\n${m.content || ""}`,
+        )
+        .join("\n\n---\n\n")
+    : firstUserMsg;
   const folderPaths = activeChat?.folderPaths || [];
   const folderPills = folderPaths.map((p) => {
     const repo = repos.find((r) => r.repoPath === p);
@@ -908,6 +1059,14 @@ export default function Investigate() {
             </svg>
           </div>
           <div className="flex-1 min-w-0">
+            {companyId && (
+              <button
+                onClick={() => navigate(`/co/${companyId}`)}
+                className="inline-flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+              >
+                ← {companyId}
+              </button>
+            )}
             <h1 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
               {activeChat?.title || "Investigate"}
             </h1>
@@ -1473,7 +1632,9 @@ export default function Investigate() {
 
       {pushOpen && (
         <PushModal
-          defaultDescription={firstUserMsg}
+          packagedDescription={packagedDescription}
+          bugSummary={firstUserMsg}
+          rootCausePreview={lastAssistantMsg}
           defaultTarget={defaultTarget}
           onCancel={() => setPushOpen(false)}
           onConfirm={handlePush}

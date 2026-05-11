@@ -1,9 +1,10 @@
 ---
 name: investigate
-description: Interactive bug root cause investigation. User describes a bug, skill traces through codebase and identifies causal chain. Use when acting as the Investigator agent.
-user-invocable: true
+description: >-
+  Interactive bug root cause investigation. User describes a bug, skill traces
+  through codebase and identifies causal chain. Use when acting as the
+  Investigator agent.
 ---
-
 # Investigate Skill
 
 ## Purpose
