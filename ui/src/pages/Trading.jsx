@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../api";
+import MarkdownContent from "../components/MarkdownContent";
+import FileEditCard from "../components/FileEditCard";
 
 const ROLE_STYLES = {
   user: "bg-emerald-600 text-white shadow-md shadow-emerald-200/40 dark:shadow-none",
@@ -142,20 +144,28 @@ function MessageBlock({ msg }) {
       <div
         className={`max-w-[88%] rounded-2xl px-4 py-2.5 ${ROLE_STYLES[msg.role]}`}
       >
-        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
-          {msg.content}
-        </pre>
+        {msg.role === "assistant" ? (
+          <MarkdownContent content={msg.content} />
+        ) : (
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+            {msg.content}
+          </pre>
+        )}
       </div>
     </div>
   );
 }
 
+const FILE_EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
+
 function StreamingBubble({ toolEvents, streamText }) {
-  const latest = toolEvents[toolEvents.length - 1]?.label;
+  const fileEdits = toolEvents.filter((t) => FILE_EDIT_TOOLS.has(t.name));
+  const otherEvents = toolEvents.filter((t) => !FILE_EDIT_TOOLS.has(t.name));
+  const latest = otherEvents[otherEvents.length - 1]?.label;
   return (
     <div className="flex justify-start mb-3">
       <div className="max-w-[88%] rounded-2xl px-4 py-2.5 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm">
-        {toolEvents.length > 0 && (
+        {otherEvents.length > 0 && (
           <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
             <span className="flex items-center gap-1">
               <span className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
@@ -170,14 +180,19 @@ function StreamingBubble({ toolEvents, streamText }) {
             </span>
             <span className="truncate">{latest || "Working"}</span>
             <span className="text-gray-400 dark:text-gray-500">
-              · {toolEvents.length}
+              · {otherEvents.length}
             </span>
           </div>
         )}
+        {fileEdits.length > 0 && (
+          <div className="mb-2 -mx-1.5">
+            {fileEdits.map((t, i) => (
+              <FileEditCard key={i} tool={t.name} input={t.input} />
+            ))}
+          </div>
+        )}
         {streamText ? (
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
-            {streamText}
-          </pre>
+          <MarkdownContent content={streamText} />
         ) : (
           <div className="flex items-center gap-1 py-1">
             <span
@@ -211,6 +226,220 @@ function friendlyToolLabel(name) {
   }
   if (name.startsWith("mcp__")) return name.split("__").slice(1).join(" / ");
   return name;
+}
+
+function LiquidityHeatmap({ symbol, theme }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = canvas.offsetHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    let basePrice, priceRange, hotLevels;
+    if (symbol.includes("BTC")) {
+      basePrice = 81058;
+      priceRange = 14000;
+      hotLevels = [
+        { price: 85799, label: "W EMA50", strength: 0.55 },
+        { price: 82086, label: "EMA200 D", strength: 0.95 },
+        { price: 81686, label: "BB Upper", strength: 0.7 },
+        { price: 81406, label: "1H EMA20", strength: 0.72 },
+        { price: 81058, label: "PRICE", strength: 1.0, current: true },
+        { price: 80722, label: "4H EMA20", strength: 0.68 },
+        { price: 80000, label: "PSY 80K", strength: 0.75 },
+        { price: 79391, label: "4H EMA50", strength: 0.82 },
+        { price: 78273, label: "W EMA20", strength: 0.65 },
+        { price: 77803, label: "D EMA20", strength: 0.62 },
+        { price: 75191, label: "D EMA50", strength: 0.88 },
+        { price: 75000, label: "PSY 75K", strength: 0.72 },
+      ];
+    } else if (symbol.includes("ETH")) {
+      basePrice = 2320;
+      priceRange = 800;
+      hotLevels = [
+        { price: 2683, label: "R3", strength: 0.5 },
+        { price: 2499, label: "R2", strength: 0.65 },
+        { price: 2411, label: "R1", strength: 0.82 },
+        { price: 2406, label: "BB Upper", strength: 0.7 },
+        { price: 2362, label: "BB Mid", strength: 0.55 },
+        { price: 2354, label: "EMA20 4H", strength: 0.62 },
+        { price: 2336, label: "EMA50 4H", strength: 0.7 },
+        { price: 2320, label: "PRICE", strength: 1.0, current: true },
+        { price: 2319, label: "BB Lower", strength: 0.88 },
+        { price: 2227, label: "S1", strength: 0.9 },
+        { price: 2131, label: "S2", strength: 0.75 },
+        { price: 2000, label: "PSY 2K", strength: 0.8 },
+        { price: 1948, label: "S3", strength: 0.62 },
+      ];
+    } else if (symbol.includes("SOL")) {
+      basePrice = 150;
+      priceRange = 70;
+      hotLevels = [
+        { price: 180, label: "R2", strength: 0.62 },
+        { price: 165, label: "R1", strength: 0.76 },
+        { price: 150, label: "PRICE", strength: 1.0, current: true },
+        { price: 140, label: "S1", strength: 0.8 },
+        { price: 125, label: "S2", strength: 0.72 },
+        { price: 110, label: "S3", strength: 0.88 },
+      ];
+    } else {
+      basePrice = 100;
+      priceRange = 40;
+      hotLevels = [
+        { price: 115, label: "R1", strength: 0.7 },
+        { price: 100, label: "PRICE", strength: 1.0, current: true },
+        { price: 88, label: "S1", strength: 0.75 },
+      ];
+    }
+
+    const priceHigh = basePrice + priceRange * 0.55;
+    const priceLow = basePrice - priceRange * 0.45;
+    const BAR_W = 20;
+    const isDark = theme === "dark";
+
+    // Background
+    ctx.fillStyle = isDark ? "#030712" : "#f1f5f9";
+    ctx.fillRect(0, 0, w, h);
+
+    // Heatmap gradient column
+    const numRows = 300;
+    for (let i = 0; i < numRows; i++) {
+      const frac = i / numRows;
+      const rowPrice = priceHigh - frac * (priceHigh - priceLow);
+      let heat = 0;
+      for (const lvl of hotLevels) {
+        const dist = Math.abs(rowPrice - lvl.price) / priceRange;
+        heat = Math.max(heat, lvl.strength * Math.exp(-dist * 45));
+      }
+      let r, g, b, a;
+      if (heat > 0.92) {
+        r = 255;
+        g = 255;
+        b = 255;
+        a = 0.95;
+      } else if (heat > 0.78) {
+        r = 239;
+        g = 68;
+        b = 68;
+        a = 0.9;
+      } else if (heat > 0.6) {
+        r = 249;
+        g = 115;
+        b = 22;
+        a = 0.8;
+      } else if (heat > 0.4) {
+        r = 234;
+        g = 179;
+        b = 8;
+        a = 0.7;
+      } else if (heat > 0.2) {
+        r = 20;
+        g = 184;
+        b = 166;
+        a = heat * 2;
+      } else {
+        r = 17;
+        g = 24;
+        b = 39;
+        a = 0.08;
+      }
+      ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+      ctx.fillRect(0, (i / numRows) * h, BAR_W, h / numRows + 1);
+    }
+
+    // Divider
+    ctx.strokeStyle = isDark ? "#1f2937" : "#cbd5e1";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(BAR_W + 1, 0);
+    ctx.lineTo(BAR_W + 1, h);
+    ctx.stroke();
+
+    // Level lines + labels
+    for (const lvl of hotLevels) {
+      if (lvl.price < priceLow || lvl.price > priceHigh) continue;
+      const y = ((priceHigh - lvl.price) / (priceHigh - priceLow)) * h;
+      const heatColor = lvl.current
+        ? "#ffffff"
+        : lvl.strength > 0.85
+          ? "#ef4444"
+          : lvl.strength > 0.7
+            ? "#f97316"
+            : lvl.strength > 0.55
+              ? "#eab308"
+              : isDark
+                ? "#6b7280"
+                : "#94a3b8";
+
+      // Horizontal line
+      ctx.strokeStyle = lvl.current
+        ? "rgba(255,255,255,0.85)"
+        : `${heatColor}99`;
+      ctx.lineWidth = lvl.current ? 1.5 : 0.8;
+      ctx.setLineDash(lvl.current ? [] : [3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(BAR_W + 2, y);
+      ctx.lineTo(w - 2, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Label name
+      ctx.font = `${lvl.current ? "bold " : ""}9px monospace`;
+      ctx.fillStyle = heatColor;
+      ctx.fillText(lvl.label, BAR_W + 4, y - 1.5);
+
+      // Price value
+      const fmt =
+        lvl.price >= 10000
+          ? `$${(lvl.price / 1000).toFixed(0)}K`
+          : lvl.price >= 1000
+            ? `$${lvl.price.toFixed(0)}`
+            : `$${lvl.price.toFixed(1)}`;
+      ctx.font = "8px monospace";
+      ctx.fillStyle = isDark ? "#4b5563" : "#94a3b8";
+      ctx.fillText(fmt, BAR_W + 4, y + 8);
+    }
+
+    // Header label
+    ctx.font = "bold 8px monospace";
+    ctx.fillStyle = isDark ? "#4b5563" : "#94a3b8";
+    ctx.fillText("LQDT", 3, 11);
+
+    // Legend strip (bottom)
+    const lgW = BAR_W - 4;
+    const lgH = 60;
+    const lgY = h - lgH - 4;
+    const gradient = ctx.createLinearGradient(2, lgY, 2, lgY + lgH);
+    gradient.addColorStop(0.0, "rgba(239,68,68,0.9)");
+    gradient.addColorStop(0.3, "rgba(249,115,22,0.8)");
+    gradient.addColorStop(0.6, "rgba(234,179,8,0.7)");
+    gradient.addColorStop(1.0, "rgba(20,184,166,0.5)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(2, lgY, lgW, lgH);
+    ctx.font = "7px monospace";
+    ctx.fillStyle = isDark ? "#6b7280" : "#94a3b8";
+    ctx.fillText("H", 3, lgY - 2);
+    ctx.fillText("L", 3, lgY + lgH + 8);
+  }, [symbol, theme]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        width: "110px",
+        flexShrink: 0,
+        height: "100%",
+        display: "block",
+      }}
+    />
+  );
 }
 
 function TradingViewChart({ symbol, interval, theme }) {
@@ -298,6 +527,8 @@ export default function Trading() {
 
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
+  const messagesRef = useRef(null);
+  const [pinnedToBottom, setPinnedToBottom] = useState(true);
 
   // Watch theme
   useEffect(() => {
@@ -340,13 +571,25 @@ export default function Trading() {
   }
 
   async function selectChat(id) {
+    const prevId = activeId;
+    if (prevId && prevId !== id && wsRef.current?.readyState === 1) {
+      wsRef.current.send(
+        JSON.stringify({ action: "chat-unsubscribe", chatId: prevId }),
+      );
+    }
     setActiveId(id);
     setStreamText("");
     setToolEvents([]);
+    setStreaming(false);
     try {
       const chat = await api.getChat(id);
       setActiveChat(chat);
     } catch {}
+    const ws = connect();
+    const subscribe = () =>
+      ws.send(JSON.stringify({ action: "chat-subscribe", chatId: id }));
+    if (ws.readyState === 1) subscribe();
+    else ws.addEventListener("open", subscribe, { once: true });
   }
 
   async function newAnalysis() {
@@ -390,12 +633,30 @@ export default function Trading() {
           sidebarBump(msg.chat),
           ...prev.filter((c) => c.id !== msg.chat.id),
         ]);
+      } else if (msg.type === "chat-resume") {
+        setStreaming(true);
+        setStreamText(msg.assistantText || "");
+        setToolEvents(
+          (msg.toolEvents || []).map((t) => ({
+            name: t.name,
+            input: t.input || {},
+            label: friendlyToolLabel(t.name),
+          })),
+        );
+      } else if (msg.type === "chat-not-running") {
+        setStreaming(false);
+        setStreamText("");
+        setToolEvents([]);
       } else if (msg.type === "chat-delta") {
         setStreamText((prev) => prev + msg.text);
       } else if (msg.type === "chat-tool") {
         setToolEvents((prev) => [
           ...prev,
-          { label: friendlyToolLabel(msg.name) },
+          {
+            name: msg.name,
+            input: msg.input || {},
+            label: friendlyToolLabel(msg.name),
+          },
         ]);
       } else if (msg.type === "chat-done") {
         setStreaming(false);
@@ -423,8 +684,27 @@ export default function Trading() {
   }, []);
 
   useEffect(() => {
+    if (pinnedToBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [activeChat?.messages, streamText, toolEvents, pinnedToBottom]);
+
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distanceFromBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight;
+      setPinnedToBottom(distanceFromBottom < 80);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [activeId]);
+
+  function jumpToBottom() {
+    setPinnedToBottom(true);
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeChat?.messages, streamText, toolEvents]);
+  }
 
   useEffect(() => {
     return () => {
@@ -447,6 +727,7 @@ export default function Trading() {
     setStreaming(true);
     setStreamText("");
     setToolEvents([]);
+    setPinnedToBottom(true);
     const dispatch = () =>
       ws.send(JSON.stringify({ action: "chat-send", chatId, message: text }));
     if (ws.readyState === 1) dispatch();
@@ -459,8 +740,10 @@ export default function Trading() {
   }
 
   function stop() {
-    if (wsRef.current?.readyState === 1) {
-      wsRef.current.send(JSON.stringify({ action: "chat-stop" }));
+    if (wsRef.current?.readyState === 1 && activeId) {
+      wsRef.current.send(
+        JSON.stringify({ action: "chat-stop", chatId: activeId }),
+      );
     }
   }
 
@@ -669,46 +952,72 @@ export default function Trading() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-3 py-4">
-          {messages.length === 0 && !streaming ? (
-            <div className="h-full flex flex-col items-center justify-center text-center px-6">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center mb-3">
-                <svg
-                  className="w-6 h-6 text-white"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M3 17l6-6 4 4 8-8M14 7h7v7"
-                  />
-                </svg>
+        <div className="flex-1 relative min-h-0">
+          <div
+            ref={messagesRef}
+            className="absolute inset-0 overflow-y-auto px-3 py-4"
+          >
+            {messages.length === 0 && !streaming ? (
+              <div className="h-full flex flex-col items-center justify-center text-center px-6">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center mb-3">
+                  <svg
+                    className="w-6 h-6 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 17l6-6 4 4 8-8M14 7h7v7"
+                    />
+                  </svg>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Pick a quick action above or ask the{" "}
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                    finance
+                  </span>{" "}
+                  agent anything about{" "}
+                  <span className="font-mono">{symbolLabel}</span>.
+                </p>
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Pick a quick action above or ask the{" "}
-                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                  finance
-                </span>{" "}
-                agent anything about{" "}
-                <span className="font-mono">{symbolLabel}</span>.
-              </p>
-            </div>
-          ) : (
-            <>
-              {messages.map((m, i) => (
-                <MessageBlock key={i} msg={m} />
-              ))}
-              {streaming && (
-                <StreamingBubble
-                  toolEvents={toolEvents}
-                  streamText={streamText}
+            ) : (
+              <>
+                {messages.map((m, i) => (
+                  <MessageBlock key={i} msg={m} />
+                ))}
+                {streaming && (
+                  <StreamingBubble
+                    toolEvents={toolEvents}
+                    streamText={streamText}
+                  />
+                )}
+                <div ref={bottomRef} />
+              </>
+            )}
+          </div>
+          {!pinnedToBottom && messages.length > 0 && (
+            <button
+              onClick={jumpToBottom}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-full shadow-lg hover:bg-gray-800 dark:hover:bg-gray-600 flex items-center gap-1.5 z-10"
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 14l-7 7m0 0l-7-7m7 7V3"
                 />
-              )}
-              <div ref={bottomRef} />
-            </>
+              </svg>
+              <span>{streaming ? "Jump to latest" : "Jump to bottom"}</span>
+            </button>
           )}
         </div>
 

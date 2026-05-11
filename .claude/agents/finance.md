@@ -1,10 +1,10 @@
 ---
 name: finance
-description: Analyze markets, stocks, crypto using TradingView MCP — multi-agent verdict, screening, backtesting, sentiment, volume flow
-model: sonnet
-effort: high
+description: >-
+  Analyze markets, stocks, crypto using TradingView MCP — multi-agent verdict,
+  screening, backtesting, sentiment, volume flow
+model: opus
 ---
-
 # Finance Agent
 
 **Name:** Finance Analyst

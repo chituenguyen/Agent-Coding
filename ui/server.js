@@ -1775,6 +1775,96 @@ app.post("/api/improve-prompt", async (req, res) => {
 // Key = taskPath, Value = { proc, output: string[], exitCode: number|null }
 const runningWorkflows = new Map();
 
+// Key = chatId, Value = { proc, assistantText, toolEvents }.
+// Tracks the *currently running* proc for a chat so we can guard against
+// duplicate sends and snapshot in-progress state for chat-resume.
+const activeChatProcs = new Map();
+
+// Key = chatId, Value = Set<ws>. Persistent across procs — a UI tab that
+// chat-subscribed once stays in the set until the ws closes or it explicitly
+// unsubscribes, so it receives events from *any* future spawn on that chat.
+const chatSubscribers = new Map();
+
+// Auto-compact threshold. When a turn's total context (prompt + cache + output)
+// reaches this, the next user send transparently runs `/compact` first so the
+// resumed session starts with a summarised history. Hard-coded 200k * 70%.
+const AUTO_COMPACT_TOKENS = 140_000;
+
+async function runCompactIfNeeded(chat, broadcast) {
+  const tokens = chat.lastContextTokens || 0;
+  if (tokens < AUTO_COMPACT_TOKENS || !chat.sessionId) return false;
+  broadcast?.({
+    type: "chat-tool",
+    name: "Compact",
+    input: { reason: `context ${tokens} tokens (>= ${AUTO_COMPACT_TOKENS})` },
+  });
+  return await new Promise((resolve) => {
+    const args = [
+      "-p",
+      "/compact",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--dangerously-skip-permissions",
+      "--resume",
+      chat.sessionId,
+    ];
+    const proc = spawn("claude", args, {
+      cwd: WORKSPACE,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let buf = "";
+    let newSid = null;
+    proc.stdout.on("data", (chunk) => {
+      buf += chunk.toString();
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line);
+          if (e.session_id) newSid = e.session_id;
+        } catch {}
+      }
+    });
+    proc.on("close", () => {
+      if (newSid && newSid !== chat.sessionId) chat.sessionId = newSid;
+      // After compaction the next prompt starts fresh — reset the counter so
+      // we don't loop-compact while the new session is still small.
+      chat.lastContextTokens = 0;
+      resolve(true);
+    });
+    proc.on("error", () => resolve(false));
+  });
+}
+
+// Key = chatId, Value = Set<absolute file path>. Tracks files the agent has
+// touched via Edit/Write/MultiEdit during this server's lifetime. The
+// /api/chats/:id/file endpoint allows reading these even when they fall
+// outside WORKSPACE/folderPaths — since the agent already wrote them,
+// letting the operator *view* them is strictly less invasive.
+const chatEditedPaths = new Map();
+function rememberEditedPath(chatId, p) {
+  if (!chatId || !p) return;
+  if (!chatEditedPaths.has(chatId)) chatEditedPaths.set(chatId, new Set());
+  chatEditedPaths.get(chatId).add(path.resolve(p));
+}
+
+function addChatSubscriber(chatId, ws) {
+  if (!chatSubscribers.has(chatId)) chatSubscribers.set(chatId, new Set());
+  chatSubscribers.get(chatId).add(ws);
+}
+
+function broadcastToChat(chatId, payload) {
+  const subs = chatSubscribers.get(chatId);
+  if (!subs || subs.size === 0) return;
+  const data = JSON.stringify(payload);
+  for (const ws of subs) {
+    if (ws.readyState === 1) ws.send(data);
+  }
+}
+
 // REST endpoint: check if a workflow is running or has buffered output
 app.get("/api/workflows/:taskPath(*)", (req, res) => {
   const wf = runningWorkflows.get(req.params.taskPath);
@@ -2187,6 +2277,47 @@ app.get("/api/chats/:id", async (req, res) => {
   const chat = await readChat(req.params.id);
   if (!chat) return res.status(404).json({ error: "Not found" });
   res.json(chat);
+});
+
+// Read a file for the live-edit panel. Restricted to WORKSPACE + the chat's
+// declared folderPaths (which are the same dirs claude is allowed to touch
+// via --add-dir), so a malicious chatId can't pull arbitrary files.
+app.get("/api/chats/:id/file", async (req, res) => {
+  const chat = await readChat(req.params.id);
+  if (!chat) return res.status(404).json({ error: "Chat not found" });
+  const filePath = req.query.path;
+  if (typeof filePath !== "string" || !filePath) {
+    return res.status(400).json({ error: "path required" });
+  }
+  const resolved = path.resolve(filePath);
+  const allowedRoots = [WORKSPACE, ...(chat.folderPaths || [])]
+    .filter(Boolean)
+    .map((p) => path.resolve(p));
+  const inAllowedRoot = allowedRoots.some(
+    (root) => resolved === root || resolved.startsWith(root + path.sep),
+  );
+  // Also allow viewing any file the agent has touched in this chat, even if
+  // it's outside the declared roots — the agent already wrote it on this
+  // host, so reading it back to the operator is safe.
+  const wasEdited = chatEditedPaths.get(req.params.id)?.has(resolved);
+  if (!inAllowedRoot && !wasEdited) {
+    return res.status(403).json({ error: "Path outside allowed roots" });
+  }
+  if (!existsSync(resolved)) {
+    return res.status(404).json({ error: "File not found" });
+  }
+  try {
+    const st = await stat(resolved);
+    if (st.size > 1024 * 1024) {
+      return res
+        .status(413)
+        .json({ error: "File too large (>1MB)", size: st.size });
+    }
+    const content = await readFile(resolved, "utf8");
+    res.json({ path: resolved, content, size: st.size, mtime: st.mtimeMs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.patch("/api/chats/:id", async (req, res) => {
@@ -2891,6 +3022,27 @@ wss.on("connection", (ws, req) => {
         return;
       }
 
+      // Auto-compact if last turn pushed context >= 70% of 200k. This blocks
+      // the user send briefly while the compact subprocess runs and gives us
+      // back a new sessionId for the summarised history. Status is sent via
+      // safeSend (not broadcast) because the sender ws isn't a subscriber yet.
+      const compacted = await runCompactIfNeeded(chat, (evt) => {
+        safeSend(evt);
+        broadcastToChat(chatId, evt);
+      });
+      if (compacted) await writeChat(chat);
+
+      // Refuse a second send while the chat already has a running proc.
+      // Two `claude --resume` on the same session jsonl race each other.
+      if (activeChatProcs.has(chatId)) {
+        safeSend({
+          type: "chat-error",
+          error:
+            "This chat is already running. Wait for the current turn to finish (or press Stop) before sending again.",
+        });
+        return;
+      }
+
       // Build the prompt: append attachment paths inline so Claude can read them
       const attachmentList = Array.isArray(attachments)
         ? attachments.filter((a) => a?.path && existsSync(a.path)).slice(0, 10)
@@ -3019,6 +3171,18 @@ wss.on("connection", (ws, req) => {
       });
       ws.activeChatProc = proc;
       ws.activeChatId = chatId;
+      const state = {
+        proc,
+        assistantText: "",
+        toolEvents: [],
+      };
+      activeChatProcs.set(chatId, state);
+      // The sender becomes a subscriber automatically so they get streaming
+      // events back. Other tabs viewing the same chat must explicitly
+      // chat-subscribe (Chat.jsx does this on selectChat).
+      ws.subscribedChatIds = ws.subscribedChatIds || new Set();
+      ws.subscribedChatIds.add(chatId);
+      addChatSubscriber(chatId, ws);
 
       let assistantText = "";
       let stdoutBuf = "";
@@ -3049,7 +3213,11 @@ wss.on("connection", (ws, req) => {
                 sub.delta?.type === "text_delta" &&
                 sub.delta.text
               ) {
-                safeSend({ type: "chat-delta", text: sub.delta.text });
+                state.assistantText += sub.delta.text;
+                broadcastToChat(chatId, {
+                  type: "chat-delta",
+                  text: sub.delta.text,
+                });
               }
               continue;
             }
@@ -3062,11 +3230,18 @@ wss.on("connection", (ws, req) => {
                 if (block.type === "text" && block.text) {
                   assistantText += block.text;
                 } else if (block.type === "tool_use") {
-                  safeSend({
-                    type: "chat-tool",
+                  const tool = {
                     name: block.name,
                     input: block.input || {},
-                  });
+                  };
+                  state.toolEvents.push(tool);
+                  if (
+                    ["Edit", "Write", "MultiEdit"].includes(block.name) &&
+                    tool.input.file_path
+                  ) {
+                    rememberEditedPath(chatId, tool.input.file_path);
+                  }
+                  broadcastToChat(chatId, { type: "chat-tool", ...tool });
                 }
               }
             }
@@ -3077,7 +3252,10 @@ wss.on("connection", (ws, req) => {
       });
 
       proc.stderr.on("data", (chunk) => {
-        safeSend({ type: "chat-stderr", data: chunk.toString() });
+        broadcastToChat(chatId, {
+          type: "chat-stderr",
+          data: chunk.toString(),
+        });
       });
 
       proc.on("close", async (code) => {
@@ -3089,8 +3267,19 @@ wss.on("connection", (ws, req) => {
           });
         }
         chat.updatedAt = new Date().toISOString();
+        // Track approx context size so we can auto-compact at 70%.
+        // Total = prompt + completion (the assistant output joins next turn's
+        // prompt). Cache reads/creation count as part of the prompt.
+        if (lastResultEvent?.usage) {
+          const u = lastResultEvent.usage;
+          chat.lastContextTokens =
+            (u.input_tokens || 0) +
+            (u.cache_read_input_tokens || 0) +
+            (u.cache_creation_input_tokens || 0) +
+            (u.output_tokens || 0);
+        }
         await writeChat(chat);
-        safeSend({ type: "chat-done", code, chat });
+        broadcastToChat(chatId, { type: "chat-done", code, chat });
         if (lastResultEvent) {
           logUsage({
             kind: chat.kind || "chat",
@@ -3104,26 +3293,83 @@ wss.on("connection", (ws, req) => {
           ws.activeChatProc = null;
           ws.activeChatId = null;
         }
+        // The map value is the state object, not the proc — compare via .proc
+        if (activeChatProcs.get(chatId)?.proc === proc) {
+          activeChatProcs.delete(chatId);
+        }
       });
     }
 
+    if (msg.action === "chat-subscribe") {
+      const { chatId } = msg;
+      if (!chatId) return;
+      ws.subscribedChatIds = ws.subscribedChatIds || new Set();
+      ws.subscribedChatIds.add(chatId);
+      addChatSubscriber(chatId, ws);
+      // Snapshot is taken synchronously — node is single-threaded so no new
+      // delta can fire between this and the send. After this, the ws is in
+      // the subscriber set and will receive every new chat-delta/chat-tool.
+      const state = activeChatProcs.get(chatId);
+      if (state) {
+        safeSend({
+          type: "chat-resume",
+          chatId,
+          assistantText: state.assistantText,
+          toolEvents: state.toolEvents,
+        });
+      } else {
+        safeSend({ type: "chat-not-running", chatId });
+      }
+    }
+
+    if (msg.action === "chat-unsubscribe") {
+      const { chatId } = msg;
+      if (!chatId) return;
+      const subs = chatSubscribers.get(chatId);
+      if (subs) {
+        subs.delete(ws);
+        if (subs.size === 0) chatSubscribers.delete(chatId);
+      }
+      ws.subscribedChatIds?.delete(chatId);
+    }
+
     if (msg.action === "chat-stop") {
-      if (ws.activeChatProc) {
-        ws.activeChatProc.kill("SIGINT");
-        safeSend({ type: "chat-stopped" });
+      // Look up the proc by chatId from the global map — `ws.activeChatProc`
+      // is only set on the ws that originally spawned, so a reloaded tab
+      // (subscriber but not spawner) wouldn't have it. The Stop button must
+      // work for any subscriber.
+      const chatId = msg.chatId || ws.activeChatId;
+      const state = chatId ? activeChatProcs.get(chatId) : null;
+      const proc = state?.proc || ws.activeChatProc;
+      if (proc) {
+        proc.kill("SIGINT");
+        if (chatId) {
+          broadcastToChat(chatId, { type: "chat-stopped" });
+        } else {
+          safeSend({ type: "chat-stopped" });
+        }
       }
     }
   });
 
-  // WebSocket close: do NOT kill the process — let it run in background
+  // WebSocket close: do NOT kill the process — let it run in background.
+  // proc.on("close") still writes the full assistant message to disk, so the
+  // user sees the complete reply when they reload the chat. Other still-open
+  // subscribers (other tabs) keep receiving live deltas.
   ws.on("close", () => {
     ws.subscribedTask = null;
-    if (ws.activeChatProc) {
-      try {
-        ws.activeChatProc.kill("SIGINT");
-      } catch {}
-      ws.activeChatProc = null;
+    if (ws.subscribedChatIds) {
+      for (const chatId of ws.subscribedChatIds) {
+        const subs = chatSubscribers.get(chatId);
+        if (subs) {
+          subs.delete(ws);
+          if (subs.size === 0) chatSubscribers.delete(chatId);
+        }
+      }
+      ws.subscribedChatIds.clear();
     }
+    ws.activeChatProc = null;
+    ws.activeChatId = null;
   });
 });
 
