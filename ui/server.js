@@ -3791,7 +3791,7 @@ setInterval(queueTick, 5000);
 const PORT = process.env.PORT || 3001;
 migrateProjectMcpFiles().catch(() => {});
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Agent Coding UI → http://localhost:${PORT}`);
+  console.log(`Uri Platform UI → http://localhost:${PORT}`);
   console.log(`Workspace: ${WORKSPACE}`);
   console.log(`Queue cron: polling every 5s`);
 });

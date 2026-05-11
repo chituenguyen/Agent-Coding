@@ -183,7 +183,7 @@ export default function Sidebar({ theme, setTheme }) {
           </div>
           <div>
             <h1 className="text-sm font-bold text-white leading-tight">
-              Agent Coding
+              Uri Platform
             </h1>
             <p className="text-xs text-slate-400 leading-tight">
               Multi-agent workspace
