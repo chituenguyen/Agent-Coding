@@ -11,12 +11,6 @@ const ROLE_STYLES = {
     "bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700/60 shadow-sm",
 };
 
-const MODELS = [
-  { id: "sonnet", label: "Sonnet 4.6" },
-  { id: "opus", label: "Opus 4.7" },
-  { id: "haiku", label: "Haiku 4.5" },
-];
-
 const EFFORTS = [
   { id: "", label: "Default" },
   { id: "low", label: "Low" },
@@ -473,7 +467,6 @@ export default function Investigate() {
   const [attachments, setAttachments] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [effortMenuOpen, setEffortMenuOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
   const [pushState, setPushState] = useState("idle"); // idle | loading | done
@@ -549,13 +542,6 @@ export default function Investigate() {
       setActiveId(null);
       setActiveChat(null);
     }
-  }
-
-  async function setChatModel(modelId) {
-    if (!activeChat) return;
-    setModelMenuOpen(false);
-    const updated = await api.updateChat(activeChat.id, { model: modelId });
-    setActiveChat(updated);
   }
 
   async function setChatEffort(effortId) {
@@ -910,7 +896,6 @@ export default function Investigate() {
   }
 
   const messages = activeChat?.messages || [];
-  const currentModel = activeChat?.model || "sonnet";
   const firstUserMsg = messages.find((m) => m.role === "user")?.content || "";
   const lastAssistantMsg =
     [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
@@ -1258,72 +1243,6 @@ export default function Investigate() {
                         </button>
                       );
                     })}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {activeChat && (
-            <div className="relative">
-              <button
-                onClick={() => setModelMenuOpen((o) => !o)}
-                className="px-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 flex items-center gap-1.5"
-                title="Change model"
-              >
-                <span>
-                  {MODELS.find((m) => m.id === currentModel)?.label ||
-                    currentModel}
-                </span>
-                <svg
-                  className="w-3 h-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </button>
-              {modelMenuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setModelMenuOpen(false)}
-                  />
-                  <div className="absolute right-0 mt-1 w-44 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20">
-                    {MODELS.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setChatModel(m.id)}
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 first:rounded-t-lg last:rounded-b-lg flex items-center justify-between ${
-                          currentModel === m.id
-                            ? "text-amber-600 dark:text-amber-400 font-medium"
-                            : "text-gray-700 dark:text-gray-300"
-                        }`}
-                      >
-                        {m.label}
-                        {currentModel === m.id && (
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
                   </div>
                 </>
               )}
