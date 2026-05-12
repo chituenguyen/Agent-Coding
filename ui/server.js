@@ -2375,8 +2375,11 @@ app.post("/api/chats", async (req, res) => {
       companyId = found.company.id;
       teamId = found.team.id;
       agent = found.team.agent || agent;
-      const teamRepos = (found.team.repos || []).filter((p) => existsSync(p));
-      folderPaths = teamRepos.length > 0 ? teamRepos : [WORKSPACE];
+      // Team repos are the *available* scope (catalog) — not auto-injected.
+      // The user picks which repos to engage per chat via the UI pill toggles
+      // (PATCH /api/chats/:id with folderPaths). Default to WORKSPACE only so
+      // the agent doesn't waste context on repos the user didn't ask for.
+      folderPaths = [WORKSPACE];
       title = `${found.company.name} · ${found.team.name}`;
     } else if (
       typeof req.body?.companyId === "string" &&
@@ -2464,9 +2467,21 @@ app.patch("/api/chats/:id", async (req, res) => {
   )
     chat.model = req.body.model;
   if (Array.isArray(req.body.folderPaths)) {
-    chat.folderPaths = req.body.folderPaths
+    let next = req.body.folderPaths
       .filter((p) => typeof p === "string" && p.trim())
       .slice(0, 10);
+    // For team chats, restrict folderPaths to the team's repo catalog
+    // (companies.json) plus WORKSPACE — so a user can't slip an arbitrary
+    // path past the pill toggles and grant Claude access via --add-dir.
+    if (chat.kind === "team" && chat.companyId && chat.teamId) {
+      const found = await findTeam(chat.companyId, chat.teamId);
+      const allowed = new Set([
+        WORKSPACE,
+        ...(found?.team?.repos || []).filter(Boolean),
+      ]);
+      next = next.filter((p) => allowed.has(p));
+    }
+    chat.folderPaths = next;
   }
   if (
     typeof req.body.effort === "string" &&

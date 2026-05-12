@@ -44,9 +44,7 @@
               "agent": "devops",
               "color": "#f97316",
               "icon": "🚀",
-              "repos": [
-                "/Users/tue.nc/Desktop/Qualgo/ops-k8s-assets"
-              ]
+              "repos": ["/Users/tue.nc/Desktop/Qualgo/ops-k8s-assets"]
             },
             {
               "id": "architect",
@@ -55,6 +53,20 @@
               "agent": "architect",
               "color": "#8b5cf6",
               "icon": "🏛️",
+              "repos": [
+                "/Users/tue.nc/Desktop/Qualgo/ops-platform",
+                "/Users/tue.nc/Desktop/Qualgo/ops-platform-package",
+                "/Users/tue.nc/Desktop/Qualgo/ops-platform/fe-dashboard",
+                "/Users/tue.nc/Desktop/Qualgo/ops-k8s-assets"
+              ]
+            },
+            {
+              "id": "brainstorm",
+              "name": "Brainstorm",
+              "tagline": "Divergent ideas, ranked options, tradeoffs",
+              "agent": "brainstorm",
+              "color": "#eab308",
+              "icon": "💡",
               "repos": [
                 "/Users/tue.nc/Desktop/Qualgo/ops-platform",
                 "/Users/tue.nc/Desktop/Qualgo/ops-platform-package",

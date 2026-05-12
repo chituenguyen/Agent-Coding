@@ -203,6 +203,32 @@ export default function TeamChat() {
     Math.round(((chat?.lastContextTokens || 0) / 200_000) * 100),
   );
 
+  // Active repos = the subset of team.repos currently in chat.folderPaths.
+  // The user toggles these via the pill bar; backend only injects active
+  // repos into Claude's --add-dir + working-folder prompt context, so chat
+  // context isn't bloated by repos the user didn't ask for.
+  const activeRepoSet = new Set(chat?.folderPaths || []);
+  const teamRepos = team?.repos || [];
+  const activeCount = teamRepos.filter((p) => activeRepoSet.has(p)).length;
+
+  async function toggleRepo(repoPath) {
+    if (!chat) return;
+    const cur = new Set(chat.folderPaths || []);
+    if (cur.has(repoPath)) cur.delete(repoPath);
+    else cur.add(repoPath);
+    const next = [...cur];
+    // Optimistic update so the pill flips instantly
+    setChat({ ...chat, folderPaths: next });
+    try {
+      const updated = await api.updateChat(chat.id, { folderPaths: next });
+      setChat(updated);
+    } catch (e) {
+      console.error("Failed to update scope", e);
+      // Revert on error
+      setChat({ ...chat });
+    }
+  }
+
   return (
     <div className="cofounder-skin flex h-full bg-co-bg text-co-fg">
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -266,22 +292,44 @@ export default function TeamChat() {
           )}
         </header>
 
-        {/* Repos pill bar */}
-        {team && (
+        {/* Repos pill bar — click to toggle which repos this chat engages.
+            Only active pills are passed to Claude as --add-dir + working-folder
+            context. Empty = pure ideation, no repo context. */}
+        {team && teamRepos.length > 0 && (
           <div className="border-b border-co-fg/10 bg-co-surface/60 px-5 py-2">
             <div className="flex items-center gap-2 overflow-x-auto">
-              <span className="shrink-0 text-[10px] uppercase tracking-wider text-co-fg/40">
-                Scope
-              </span>
-              {(team.repos || []).map((p) => (
-                <span
-                  key={p}
-                  className="shrink-0 rounded-co-sm bg-co-fg/[0.05] px-2 py-1 font-mono text-[10px] text-co-fg/60"
-                  title={p}
-                >
-                  {p.split("/").slice(-2).join("/")}
+              <span
+                className="shrink-0 text-[10px] uppercase tracking-wider text-co-fg/40"
+                title="Click a repo to include/exclude it for this chat"
+              >
+                Scope{" "}
+                <span className="font-mono text-co-fg/30">
+                  {activeCount}/{teamRepos.length}
                 </span>
-              ))}
+              </span>
+              {teamRepos.map((p) => {
+                const active = activeRepoSet.has(p);
+                return (
+                  <button
+                    key={p}
+                    onClick={() => toggleRepo(p)}
+                    title={`${active ? "Remove" : "Add"} ${p}`}
+                    className={`shrink-0 rounded-co-sm px-2 py-1 font-mono text-[10px] transition-colors ${
+                      active
+                        ? "bg-co-primary/15 text-co-primary ring-1 ring-co-primary/40"
+                        : "bg-co-fg/[0.04] text-co-fg/50 hover:bg-co-fg/[0.08] hover:text-co-fg/80"
+                    }`}
+                  >
+                    {active ? "● " : "○ "}
+                    {p.split("/").slice(-2).join("/")}
+                  </button>
+                );
+              })}
+              {activeCount === 0 && (
+                <span className="shrink-0 text-[10px] italic text-co-fg/40">
+                  no repo context — pure ideation mode
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -295,8 +343,10 @@ export default function TeamChat() {
             <div className="mx-auto max-w-3xl">
               {messages.length === 0 && !streaming && (
                 <div className="rounded-co-lg border border-dashed border-co-fg/15 bg-co-surface/50 p-6 text-center text-sm text-co-fg/60">
-                  Ask {team?.name || "this team"} anything inside its repo
-                  scope. Hand off to other teams with{" "}
+                  Ask {team?.name || "this team"} anything. Click a repo in the{" "}
+                  <strong className="text-co-fg/80">Scope</strong> bar above to
+                  give it codebase context — or leave empty for pure ideation.
+                  Hand off to other teams with{" "}
                   <code className="rounded bg-co-fg/[0.05] px-1 font-mono">
                     @-mention
                   </code>{" "}
