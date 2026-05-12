@@ -73,6 +73,20 @@
                 "/Users/tue.nc/Desktop/Qualgo/ops-platform/fe-dashboard",
                 "/Users/tue.nc/Desktop/Qualgo/ops-k8s-assets"
               ]
+            },
+            {
+              "id": "qc",
+              "name": "QC",
+              "tagline": "Tests, coverage, flaky-detection, build verification",
+              "agent": "qc",
+              "color": "#14b8a6",
+              "icon": "🧪",
+              "repos": [
+                "/Users/tue.nc/Desktop/Qualgo/ops-platform",
+                "/Users/tue.nc/Desktop/Qualgo/ops-platform-package",
+                "/Users/tue.nc/Desktop/Qualgo/ops-platform/fe-dashboard",
+                "/Users/tue.nc/Desktop/Qualgo/ops-k8s-assets"
+              ]
             }
           ]
         }
