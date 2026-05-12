@@ -153,4 +153,9 @@ export const api = {
   // Companies / rooms / teams
   getCompanies: () => req("GET", "/companies"),
   getCompany: (id) => req("GET", `/companies/${id}`),
+  createCompany: (data) => req("POST", "/companies", data),
+  updateCompany: (id, data) => req("PATCH", `/companies/${id}`, data),
+  deleteCompany: (id) => req("DELETE", `/companies/${id}`),
+  updateTeam: (companyId, teamId, data) =>
+    req("PATCH", `/companies/${companyId}/teams/${teamId}`, data),
 };

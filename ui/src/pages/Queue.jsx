@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const plainDescription = (desc = "") =>
   desc
@@ -167,12 +169,12 @@ export default function Queue() {
   }
 
   async function handleCancel() {
-    if (!confirm("Cancel the running task?")) return;
+    if (!(await dialog.confirm({ message: "Cancel the running task?", tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await api.cancelQueue();
       load();
     } catch (err) {
-      alert("Failed: " + err.message);
+      toast.error("Failed: " + err.message);
     }
   }
 
@@ -181,17 +183,17 @@ export default function Queue() {
       await api.retryQueue(index);
       load();
     } catch (err) {
-      alert("Failed: " + err.message);
+      toast.error("Failed: " + err.message);
     }
   }
 
   async function handleRemove(index) {
-    if (!confirm("Remove this item from queue?")) return;
+    if (!(await dialog.confirm({ message: "Remove this item from queue?", tone: "danger", confirmLabel: "Delete" }))) return;
     try {
       await api.removeQueue(index);
       load();
     } catch (err) {
-      alert("Failed: " + err.message);
+      toast.error("Failed: " + err.message);
     }
   }
 

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import Modal from '../components/Modal'
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const EMPTY_FORM = { dirname: '', name: '', description: '', userInvocable: true, body: '' }
 
@@ -70,10 +72,10 @@ export default function Skills() {
   }
 
   async function handleDelete(dirname) {
-    if (!confirm(`Delete skill "${dirname}"? This will remove the entire directory.`)) return
+    if (!(await dialog.confirm({ message: `Delete skill "${dirname}"? This will remove the entire directory.`, tone: "danger", confirmLabel: "Delete" }))) return
     setDeleting(dirname)
     try { await api.deleteSkill(dirname); load() }
-    catch (e) { alert(e.message) }
+    catch (e) { toast.error(e.message) }
     finally { setDeleting(null) }
   }
 

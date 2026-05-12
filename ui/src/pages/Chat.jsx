@@ -3,6 +3,8 @@ import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
 import LiveFilePanel from "../components/LiveFilePanel";
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const ROLE_STYLES = {
   // Subtle 5% black-tint bubble (cofounder pattern) instead of bright accent —
@@ -14,6 +16,7 @@ const ROLE_STYLES = {
 const MODELS = [
   { id: "sonnet", label: "Sonnet 4.6" },
   { id: "opus", label: "Opus 4.7" },
+  { id: "opus-4-6", label: "Opus 4.6" },
   { id: "haiku", label: "Haiku 4.5" },
 ];
 
@@ -59,7 +62,28 @@ function MentionRow({ item, selected, onPick, onHover, scrollRef }) {
         selected ? "bg-co-fg/[0.08]" : "hover:bg-co-fg/[0.05]"
       }`}
     >
-      <span className="text-base">{isFolder ? "📁" : "🤖"}</span>
+      <span
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-co-sm"
+        style={{
+          background: isFolder
+            ? "linear-gradient(135deg, #f59e0b33, #f59e0b14)"
+            : "linear-gradient(135deg, #6366f133, #6366f114)",
+          color: isFolder ? "#d97706" : "#6366f1",
+        }}
+      >
+        {isFolder ? (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+          </svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="6" width="18" height="12" rx="2" />
+            <circle cx="9" cy="12" r="1" fill="currentColor" />
+            <circle cx="15" cy="12" r="1" fill="currentColor" />
+            <path d="M8 6V4M16 6V4" opacity="0.6" />
+          </svg>
+        )}
+      </span>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-co-fg">
           @{isFolder ? item.data.name : item.data.name || item.data.filename}
@@ -159,7 +183,18 @@ function MessageBlock({ msg }) {
                 }`}
                 title={a.path}
               >
-                {a.contentType?.startsWith("image/") ? "🖼️" : "📎"} {a.filename}
+                {a.contentType?.startsWith("image/") ? (
+                  <svg className="inline -mt-0.5" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="M21 15l-5-5L5 21" />
+                  </svg>
+                ) : (
+                  <svg className="inline -mt-0.5" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                )}{" "}
+                {a.filename}
               </span>
             ))}
           </div>
@@ -340,7 +375,7 @@ export default function Chat() {
 
   async function deleteChat(id, e) {
     e.stopPropagation();
-    if (!confirm("Delete this chat?")) return;
+    if (!(await dialog.confirm({ message: "Delete this chat?", tone: "danger", confirmLabel: "Delete" }))) return;
     await api.deleteChat(id);
     setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -352,7 +387,12 @@ export default function Chat() {
   async function renameChatPrompt(id, e) {
     e.stopPropagation();
     const current = chats.find((c) => c.id === id);
-    const next = prompt("Rename chat:", current?.title || "");
+    const next = await dialog.prompt({
+      title: "Rename chat",
+      defaultValue: current?.title || "",
+      placeholder: "Thread title",
+      confirmLabel: "Rename",
+    });
     if (!next?.trim()) return;
     await api.renameChat(id, next.trim());
     refreshChats();
@@ -587,7 +627,7 @@ export default function Chat() {
         setAttachments((prev) =>
           prev.filter((a) => a._localId !== placeholder._localId),
         );
-        alert(`Upload failed for ${file.name}: ${err.message}`);
+        toast.error(`Upload failed for ${file.name}: ${err.message}`);
       }
     }
   }
@@ -733,31 +773,63 @@ export default function Chat() {
       <aside
         className={`${sidebarOpen ? "w-72" : "w-0"} transition-all overflow-hidden border-r border-co-fg/10 flex flex-col bg-co-surface`}
       >
-        <div className="p-3 border-b border-co-fg/10">
+        <div className="p-4">
+          <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-co-fg/40">
+            <span className="h-px w-5 bg-co-fg/15" />
+            Threads
+          </div>
           <button
             onClick={newChat}
-            className="w-full px-3 py-2 bg-co-primary hover:opacity-90 text-co-primary-fg text-sm font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
+            className="group flex w-full items-center justify-center gap-2 rounded-co bg-co-primary px-3 py-2.5 text-sm font-semibold text-co-primary-fg shadow-[0_4px_14px_-6px_rgba(0,0,0,0.25)] transition-all hover:opacity-95 hover:shadow-[0_6px_20px_-8px_rgba(0,0,0,0.4)]"
           >
             <svg
-              className="w-4 h-4"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              viewBox="0 0 24 24"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="transition-transform group-hover:rotate-90"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
+              <path d="M12 5v14M5 12h14" />
             </svg>
             New chat
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
           {chats.length === 0 && (
-            <div className="text-center text-xs text-co-fg/50 py-8">
-              No chats yet. Create one to get started.
+            <div className="relative mt-2 overflow-hidden rounded-co border border-dashed border-co-fg/15 px-4 py-8 text-center">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -top-12 left-1/2 h-28 w-28 -translate-x-1/2 rounded-full opacity-30 blur-3xl"
+                style={{
+                  background:
+                    "radial-gradient(circle, rgb(var(--co-accent-rgb)) 0%, transparent 70%)",
+                }}
+              />
+              <div className="relative mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-co bg-co-bg ring-1 ring-co-fg/[0.08]">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-co-fg/50"
+                >
+                  <path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z" />
+                </svg>
+              </div>
+              <p className="relative text-xs font-medium text-co-fg/70">
+                No threads yet
+              </p>
+              <p className="relative mt-0.5 text-[10px] text-co-fg/40">
+                Click <span className="font-semibold text-co-fg/60">New chat</span> to start
+              </p>
             </div>
           )}
           {chats.map((c) => (
@@ -837,58 +909,128 @@ export default function Chat() {
         onDrop={onDrop}
       >
         {/* Header */}
-        <div className="px-4 py-3 border-b border-co-fg/10 bg-co-surface flex items-center gap-3">
+        <div className="flex items-center gap-3 border-b border-co-fg/10 bg-co-surface/80 px-5 py-3 backdrop-blur-sm">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
-            className="p-1.5 text-co-fg/50 hover:text-co-fg rounded-md hover:bg-co-fg/[0.05]"
+            className="flex h-8 w-8 items-center justify-center rounded-co-sm text-co-fg/50 transition-colors hover:bg-co-fg/[0.06] hover:text-co-fg"
             title="Toggle sidebar"
           >
             <svg
-              className="w-4 h-4"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              viewBox="0 0 24 24"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 6h16M4 12h16M4 18h16"
-              />
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M9 4v16" />
             </svg>
           </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-semibold text-co-fg truncate">
+          {/* Robot avatar — subtle gradient ring with status pulse */}
+          <div className="relative shrink-0" aria-hidden>
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-full text-co-fg/70"
+              style={{
+                background:
+                  "linear-gradient(135deg, rgb(var(--co-fg-rgb) / 0.06), rgb(var(--co-fg-rgb) / 0.02))",
+                boxShadow: "inset 0 0 0 1px rgb(var(--co-fg-rgb) / 0.08)",
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                {/* Head */}
+                <rect x="5" y="8" width="14" height="10" rx="3" />
+                {/* Antenna */}
+                <path d="M12 5v3" />
+                <circle cx="12" cy="4" r="0.9" fill="currentColor" stroke="none" />
+                {/* Eyes */}
+                <circle cx="9.2" cy="13" r="0.9" fill="currentColor" stroke="none" />
+                <circle cx="14.8" cy="13" r="0.9" fill="currentColor" stroke="none" />
+                {/* Side ears */}
+                <path d="M3.5 12v2M20.5 12v2" opacity="0.55" />
+              </svg>
+            </div>
+            {/* Tiny status dot */}
+            <span
+              className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-co-surface"
+              style={{
+                background: streaming
+                  ? "rgb(var(--co-accent-rgb))"
+                  : "rgb(var(--co-success-rgb))",
+                boxShadow: streaming
+                  ? "0 0 6px rgb(var(--co-accent-rgb) / 0.8)"
+                  : "0 0 4px rgb(var(--co-success-rgb) / 0.7)",
+                animation: streaming ? "pulse 1.2s ease-in-out infinite" : "none",
+              }}
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold tracking-tight text-co-fg">
               {activeChat?.title || "Chat with orchestrator"}
             </h1>
-            <p className="text-xs text-co-fg/50">
-              <code className="px-1 bg-co-fg/[0.05] rounded">@</code> mentions
-              agents and folders
+            <p className="mt-0.5 text-[11px] text-co-fg/45">
+              Type{" "}
+              <code className="rounded bg-co-fg/[0.06] px-1 font-mono text-co-fg/65">
+                @
+              </code>{" "}
+              to mention an agent or folder
             </p>
           </div>
 
-          {/* Context size indicator — auto-compacts at 70% (140k) */}
+          {/* Context size progress bar — fills L→R, color shifts at 50% / 70% / 90% */}
           {activeChat &&
             (() => {
               const used = activeChat.lastContextTokens || 0;
               const pct = Math.min(100, Math.round((used / 200_000) * 100));
-              const tone =
-                pct >= 70
-                  ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                  : pct >= 50
-                    ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                    : "bg-co-fg/[0.05] text-co-fg/50";
+              // Color thresholds: cool (low) → accent → amber → red
+              const color =
+                pct >= 90
+                  ? "#ef4444"
+                  : pct >= 70
+                    ? "#f97316"
+                    : pct >= 50
+                      ? "#f59e0b"
+                      : pct >= 25
+                        ? "rgb(var(--co-accent-rgb))"
+                        : "rgb(var(--co-success-rgb))";
               return (
-                <span
-                  title={`Context: ${used.toLocaleString()} / 200,000 tokens. Auto-compacts at 70%.`}
-                  className={`px-2 py-1 text-[10px] font-mono rounded-md ${tone}`}
+                <div
+                  title={`Context: ${used.toLocaleString()} / 200,000 tokens · ${pct}%. Auto-compacts at 70%.`}
+                  className="flex w-24 shrink-0 flex-col gap-1"
                 >
-                  ctx {pct}%
-                </span>
+                  <div className="flex items-center justify-between text-[9px] font-medium uppercase tracking-wider text-co-fg/45">
+                    <span>ctx</span>
+                    <span
+                      className="font-mono tabular-nums transition-colors duration-500"
+                      style={{ color }}
+                    >
+                      {pct}%
+                    </span>
+                  </div>
+                  <div className="relative h-1.5 overflow-hidden rounded-full bg-co-fg/[0.06]">
+                    {/* Threshold tick at 70% (auto-compact line) */}
+                    <span
+                      aria-hidden
+                      className="absolute top-0 h-full w-px bg-co-fg/15"
+                      style={{ left: "70%" }}
+                    />
+                    <div
+                      className="h-full rounded-full transition-all duration-700 ease-out"
+                      style={{
+                        width: `${Math.max(2, pct)}%`,
+                        background: `linear-gradient(90deg, ${color}aa, ${color})`,
+                        boxShadow: `0 0 8px ${color}99`,
+                      }}
+                    />
+                  </div>
+                </div>
               );
             })()}
 
-          {/* Live files toggle */}
+          {/* Files toggle — icon-only chip */}
           {activeChat && (
             <button
               onClick={() => setLivePanelOpen((v) => !v)}
@@ -897,35 +1039,21 @@ export default function Chat() {
                   ? "Files the agent edits will appear here"
                   : `${fileEdits.length} file edit${fileEdits.length === 1 ? "" : "s"} so far`
               }
-              className={`px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors flex items-center gap-1.5 ${
+              className={`flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium transition-colors ${
                 livePanelOpen
-                  ? "bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-500"
-                  : "border-co-fg/20 text-co-fg/70 hover:bg-co-fg/[0.05]"
+                  ? "border-co-success/40 bg-co-success/15 text-co-success"
+                  : "border-co-fg/15 text-co-fg/60 hover:border-co-fg/30 hover:text-co-fg"
               }`}
             >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
               </svg>
-              <span>Files</span>
-              {fileEdits.length > 0 && (
-                <span className="ml-0.5 px-1 rounded bg-white/20 text-[10px] font-mono">
-                  {fileEdits.length}
-                </span>
-              )}
+              {fileEdits.length > 0 ? fileEdits.length : "Files"}
             </button>
           )}
 
-          {/* Plan mode toggle */}
+          {/* Plan mode toggle — icon-only chip */}
           {activeChat && (
             <button
               onClick={togglePlanMode}
@@ -934,95 +1062,17 @@ export default function Chat() {
                   ? "Plan mode ON — Claude will propose a plan before executing"
                   : "Toggle plan mode"
               }
-              className={`px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors flex items-center gap-1.5 ${
+              className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
                 activeChat.planMode
-                  ? "bg-co-primary border-co-primary text-co-primary-fg hover:opacity-90"
-                  : "border-co-fg/20 text-co-fg/70 hover:bg-co-fg/[0.05]"
+                  ? "border-co-primary bg-co-primary text-co-primary-fg"
+                  : "border-co-fg/15 text-co-fg/60 hover:border-co-fg/30 hover:text-co-fg"
               }`}
             >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
               </svg>
-              <span>Plan</span>
             </button>
-          )}
-
-          {/* Model dropdown */}
-          {activeChat && (
-            <div className="relative">
-              <button
-                onClick={() => setModelMenuOpen((o) => !o)}
-                className="px-3 py-1.5 text-xs font-medium border border-co-fg/20 rounded-md hover:bg-co-fg/[0.05] text-co-fg/70 flex items-center gap-1.5"
-                title="Change model"
-              >
-                <span>
-                  Model:{" "}
-                  {MODELS.find((m) => m.id === currentModel)?.label ||
-                    currentModel}
-                </span>
-                <svg
-                  className="w-3 h-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </button>
-              {modelMenuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setModelMenuOpen(false)}
-                  />
-                  <div className="absolute right-0 mt-1 w-44 bg-co-surface border border-co-fg/10 rounded-lg shadow-lg z-20">
-                    {MODELS.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => setChatModel(m.id)}
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-co-fg/[0.05] first:rounded-t-lg last:rounded-b-lg flex items-center justify-between ${
-                          currentModel === m.id
-                            ? "text-co-fg font-medium"
-                            : "text-co-fg/70"
-                        }`}
-                      >
-                        {m.label}
-                        {currentModel === m.id && (
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M5 13l4 4L19 7"
-                            />
-                          </svg>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
           )}
         </div>
 
@@ -1059,7 +1109,10 @@ export default function Chat() {
                 className="inline-flex items-center gap-1.5 px-2 py-1 bg-co-fg/[0.08] text-co-fg text-xs rounded-md font-mono"
                 title={f.path}
               >
-                📁 {f.name}
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="text-co-fg/55">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                </svg>
+                {f.name}
                 <button
                   onClick={() => removeFolder(f.path)}
                   className="hover:text-red-500"
@@ -1091,30 +1144,100 @@ export default function Chat() {
             className="absolute inset-0 overflow-y-auto px-4 py-6"
           >
             {!activeId ? (
-              <div className="h-full flex items-center justify-center text-co-fg/50 text-sm">
-                Select or create a chat to begin.
-              </div>
-            ) : messages.length === 0 && !streaming ? (
-              <div className="h-full flex flex-col items-center justify-center text-center px-4">
-                <div className="w-12 h-12 bg-co-fg/[0.08] rounded-full flex items-center justify-center mb-3">
-                  <svg
-                    className="w-6 h-6 text-co-fg"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
+              <div className="relative flex h-full items-center justify-center px-4">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.08] blur-3xl"
+                  style={{
+                    background:
+                      "radial-gradient(circle, rgb(var(--co-accent-rgb)) 0%, transparent 70%)",
+                  }}
+                />
+                <div className="relative max-w-md text-center">
+                  <div className="relative mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-co-lg bg-co-surface ring-1 ring-co-fg/[0.08]">
+                    <svg
+                      width="26"
+                      height="26"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                    />
+                      className="text-co-fg/50"
+                    >
+                      <path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z" />
+                    </svg>
+                    <span
+                      className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      style={{ background: "rgb(var(--co-accent-rgb))" }}
+                    >
+                      @
+                    </span>
+                  </div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-co-fg/40">
+                    Conversation
+                  </div>
+                  <h2 className="mt-1.5 text-2xl font-semibold tracking-tight text-co-fg">
+                    Start a new thread
+                  </h2>
+                  <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-co-fg/55">
+                    Type{" "}
+                    <code className="rounded bg-co-fg/[0.06] px-1.5 py-0.5 font-mono text-co-fg/80">
+                      @
+                    </code>{" "}
+                    to mention an agent or folder. The orchestrator routes your
+                    message to the right specialist.
+                  </p>
+                  <button
+                    onClick={newChat}
+                    className="mt-6 inline-flex items-center gap-2 rounded-co bg-co-primary px-4 py-2.5 text-sm font-semibold text-co-primary-fg transition-opacity hover:opacity-90"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    New chat
+                  </button>
+                </div>
+              </div>
+            ) : messages.length === 0 && !streaming ? (
+              <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+                <div className="relative mb-4 flex h-14 w-14 items-center justify-center rounded-co-lg bg-co-surface ring-1 ring-co-fg/[0.08]">
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-co-fg/50"
+                  >
+                    <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
                 </div>
-                <p className="text-sm text-co-fg/50 max-w-md">
-                  Type <code className="px-1 bg-co-fg/[0.05] rounded">@</code>{" "}
+                <h3 className="text-base font-semibold tracking-tight text-co-fg">
+                  Say hi to your team
+                </h3>
+                <p className="mt-1.5 max-w-md text-sm leading-relaxed text-co-fg/55">
+                  Type{" "}
+                  <code className="rounded bg-co-fg/[0.06] px-1.5 py-0.5 font-mono text-co-fg/80">
+                    @
+                  </code>{" "}
                   to mention an agent (e.g.{" "}
-                  <code className="px-1 bg-co-fg/[0.05] rounded">@finance</code>
+                  <code className="rounded bg-co-fg/[0.06] px-1.5 py-0.5 font-mono text-co-fg/80">
+                    @finance
+                  </code>
                   ) or a folder to switch the working directory.
                 </p>
               </div>
@@ -1180,8 +1303,18 @@ export default function Chat() {
                         : "bg-co-fg/[0.05] border-co-fg/10 text-co-fg"
                     }`}
                   >
-                    <span>
-                      {a.contentType?.startsWith("image/") ? "🖼️" : "📎"}
+                    <span className="text-co-fg/55">
+                      {a.contentType?.startsWith("image/") ? (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="18" height="18" rx="2" />
+                          <circle cx="8.5" cy="8.5" r="1.5" />
+                          <path d="M21 15l-5-5L5 21" />
+                        </svg>
+                      ) : (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                        </svg>
+                      )}
                     </span>
                     <span className="font-mono truncate max-w-[200px]">
                       {a.filename}
@@ -1231,34 +1364,8 @@ export default function Chat() {
                 ))}
               </div>
             )}
-            <div className="flex items-end gap-2 border border-co-fg/20 rounded-2xl px-3 py-2 bg-co-surface shadow-sm focus-within:border-co-fg/30 focus-within:ring-2 focus-within:ring-co-fg/10 transition-all">
-              <label
-                className="cursor-pointer text-co-fg/50 hover:text-co-fg transition-colors shrink-0 self-end pb-1"
-                title="Attach file"
-              >
-                <input
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    uploadFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                  />
-                </svg>
-              </label>
+            {/* Devin-style composer: textarea on top, controls row below */}
+            <div className="flex flex-col rounded-3xl border border-co-fg/10 bg-co-surface px-5 py-4 transition-all focus-within:border-co-fg/25">
               <textarea
                 ref={inputRef}
                 value={input}
@@ -1267,43 +1374,159 @@ export default function Chat() {
                 onPaste={onPaste}
                 placeholder={
                   activeId
-                    ? "Message... (@ for agents and folders, drop or paste files)"
+                    ? "Ask ZIO about your code…"
                     : "Create a chat first"
                 }
                 disabled={!activeId || streaming}
                 rows={1}
-                className="flex-1 resize-none bg-transparent text-sm text-co-fg placeholder:text-co-fg/50 focus:outline-none max-h-40"
-                style={{ minHeight: "24px" }}
+                className="max-h-40 w-full resize-none bg-transparent text-[15px] leading-relaxed text-co-fg placeholder:text-co-fg/40 focus:outline-none"
+                style={{ minHeight: "28px" }}
                 onInput={(e) => {
                   e.target.style.height = "auto";
                   e.target.style.height =
                     Math.min(e.target.scrollHeight, 160) + "px";
                 }}
               />
-              {streaming ? (
+
+              {/* Bottom controls row */}
+              <div className="mt-3 flex items-center gap-1.5">
+                {/* Left: model pill (Devin's "Auto") */}
                 <button
-                  onClick={stop}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs rounded-lg font-medium transition-colors"
+                  type="button"
+                  onClick={() => setModelMenuOpen((o) => !o)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-co-fg/15 px-3 py-1.5 text-xs font-medium text-co-fg/75 transition-colors hover:border-co-fg/30 hover:bg-co-fg/[0.04] hover:text-co-fg"
+                  title="Change model"
                 >
-                  Stop
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
+                  </svg>
+                  {MODELS.find((m) => m.id === currentModel)?.label || "Auto"}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="text-co-fg/45">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
                 </button>
-              ) : (
+
+                {/* + Attach */}
+                <label
+                  className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-co-fg/55 transition-colors hover:bg-co-fg/[0.06] hover:text-co-fg"
+                  title="Attach file"
+                >
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      uploadFiles(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </label>
+
+                <div className="flex-1" />
+
+                {/* Mic placeholder (voice input — not wired) */}
                 <button
-                  onClick={send}
-                  disabled={
-                    (!input.trim() && attachments.length === 0) ||
-                    !activeId ||
-                    attachments.some((a) => a.uploading)
-                  }
-                  className="px-3 py-1.5 bg-co-primary hover:opacity-90 disabled:bg-co-fg/20 disabled:cursor-not-allowed text-co-primary-fg text-xs rounded-lg font-medium transition-colors"
+                  type="button"
+                  title="Voice input (coming soon)"
+                  disabled
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-co-fg/35 transition-colors hover:bg-co-fg/[0.04] disabled:cursor-not-allowed"
                 >
-                  Send
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="2" width="6" height="12" rx="3" />
+                    <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
+                  </svg>
                 </button>
+
+                {/* Send / Stop — circular */}
+                {streaming ? (
+                  <button
+                    onClick={stop}
+                    title="Stop"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-co-destructive text-white transition-opacity hover:opacity-90"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    onClick={send}
+                    disabled={
+                      (!input.trim() && attachments.length === 0) ||
+                      !activeId ||
+                      attachments.some((a) => a.uploading)
+                    }
+                    title="Send (Enter)"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-co-primary text-co-primary-fg transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:bg-co-fg/15 disabled:text-co-fg/40"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              {/* Model dropdown popup */}
+              {modelMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-30"
+                    onClick={() => setModelMenuOpen(false)}
+                  />
+                  <div className="absolute bottom-full left-5 z-40 mb-2 w-48 overflow-hidden rounded-co border border-co-fg/10 bg-co-surface shadow-[0_8px_32px_-12px_rgba(0,0,0,0.25)]">
+                    {MODELS.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          setChatModel(m.id);
+                          setModelMenuOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between px-3 py-2 text-sm transition-colors hover:bg-co-fg/[0.05] ${
+                          currentModel === m.id
+                            ? "font-semibold text-co-fg"
+                            : "text-co-fg/70"
+                        }`}
+                      >
+                        {m.label}
+                        {currentModel === m.id && (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
-            <p className="text-xs text-co-fg/50 mt-1.5 px-1">
-              Enter to send · Shift+Enter for newline · Esc to close mention
-            </p>
+
+            {/* Scope chip below (like Devin's "All repositories") */}
+            <div className="mt-2.5 flex items-center justify-between gap-3 px-1">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-[11px] text-co-fg/50 transition-colors hover:text-co-fg/80"
+                title="Type @ to add a folder to this chat"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                </svg>
+                {folderPills.length === 0
+                  ? "All repositories"
+                  : folderPills.length === 1
+                    ? folderPills[0].name
+                    : `${folderPills.length} folders scoped`}
+              </button>
+              <p className="text-[10px] text-co-fg/35">
+                <kbd className="rounded bg-co-fg/[0.05] px-1 py-0.5 font-mono text-[9px] text-co-fg/55">@</kbd>{" "}
+                mention ·{" "}
+                <kbd className="rounded bg-co-fg/[0.05] px-1 py-0.5 font-mono text-[9px] text-co-fg/55">⏎</kbd>{" "}
+                send
+              </p>
+            </div>
           </div>
         </div>
       </main>

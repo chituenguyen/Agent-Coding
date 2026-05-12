@@ -8,7 +8,7 @@ const STEPS = [
           d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
       </svg>
     ),
-    title: 'Welcome to Uri Platform',
+    title: 'Welcome to ZIO Platform',
     subtitle: 'Your multi-agent AI workspace',
     description: 'Describe what you want to build or fix — Claude spawns a team of specialized agents that plan, code, review, and commit automatically.',
     color: 'indigo',
