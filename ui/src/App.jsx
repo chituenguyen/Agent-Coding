@@ -1,5 +1,8 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "sonner";
 import Sidebar from "./components/Sidebar";
+import { DialogHost } from "./components/Dialog";
+import RtkAiBanner from "./components/RtkAiBanner";
 import Tasks from "./pages/Tasks";
 import TaskDetail from "./pages/TaskDetail";
 import Queue from "./pages/Queue";
@@ -23,6 +26,21 @@ export default function App() {
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950 overflow-hidden">
       <Onboarding />
       <Sidebar theme={theme} setTheme={setTheme} />
+      <Toaster
+        position="top-center"
+        theme={theme === "dark" ? "dark" : "light"}
+        richColors
+        closeButton
+        offset={0}
+        toastOptions={{
+          className: "zio-toast",
+          style: {
+            fontFamily: '"Figtree", system-ui, sans-serif',
+          },
+        }}
+      />
+      <DialogHost />
+      <RtkAiBanner />
       <main className="flex-1 overflow-y-auto pt-12 md:pt-0">
         <Routes>
           <Route path="/" element={<Home />} />

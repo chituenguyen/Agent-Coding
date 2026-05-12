@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import Modal from '../components/Modal'
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const MODEL_OPTIONS = ['sonnet', 'haiku', 'opus', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-6']
-const inputCls = 'w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none'
+const inputCls = 'w-full rounded-co-sm border border-co-fg/15 bg-co-bg text-co-fg px-3 py-2 text-sm outline-none focus:border-co-fg/40 transition-colors'
 
 // Prompt tone presets — replaces "temperature" for LLM agents
 const TONE_PRESETS = [
@@ -225,13 +227,13 @@ export default function Agents() {
   }
 
   async function deleteAgent(filename) {
-    if (!confirm(`Delete agent "${filename}"?`)) return
+    if (!(await dialog.confirm({ message: `Delete agent "${filename}"?`, tone: "danger", confirmLabel: "Delete" }))) return
     await api.deleteAgent(filename)
     load()
   }
 
   async function deleteSkill(dirname) {
-    if (!confirm(`Delete skill "${dirname}"?`)) return
+    if (!(await dialog.confirm({ message: `Delete skill "${dirname}"?`, tone: "danger", confirmLabel: "Delete" }))) return
     await api.deleteSkill(dirname)
     load()
   }
@@ -244,30 +246,51 @@ export default function Agents() {
   const showSkillTab = modal?.mode !== 'edit-skill'
 
   return (
-    <div className="p-8 max-w-4xl">
+    <div className="cofounder-skin relative min-h-full bg-co-bg">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-40 left-1/2 h-[420px] w-[420px] -translate-x-1/2 rounded-full opacity-[0.06] blur-3xl"
+        style={{
+          background:
+            'radial-gradient(circle, rgb(var(--co-accent-rgb)) 0%, transparent 70%)',
+        }}
+      />
+      <div className="relative mx-auto max-w-4xl px-8 py-10">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <header className="mb-8 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Agents & Skills</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            {agents.length} agents · {skills.length} skills
-          </p>
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-co-fg/40">
+            <span className="h-px w-6 bg-co-fg/20" />
+            Configure
+          </div>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-co-fg">Agents &amp; Skills</h1>
+          <div className="mt-1.5 flex items-center gap-3 text-xs text-co-fg/55">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+              {agents.length} agent{agents.length === 1 ? '' : 's'}
+            </span>
+            <span className="text-co-fg/25">·</span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              {skills.length} skill{skills.length === 1 ? '' : 's'}
+            </span>
+          </div>
         </div>
         <button
           onClick={openNew}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+          className="group inline-flex shrink-0 items-center gap-2 rounded-co-sm bg-co-primary px-4 py-2 text-xs font-semibold text-co-primary-fg shadow-[0_4px_14px_-6px_rgba(0,0,0,0.25)] transition-all hover:opacity-90 hover:shadow-[0_6px_20px_-8px_rgba(0,0,0,0.4)]"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:rotate-90">
+            <path d="M12 5v14M5 12h14" />
           </svg>
           New Agent
         </button>
-      </div>
+      </header>
 
       {loading ? (
-        <div className="text-gray-400 dark:text-gray-500 text-sm py-8">Loading...</div>
+        <div className="py-8 text-sm text-co-fg/45">Loading…</div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {/* Paired agent+skill rows */}
           {pairs.map(({ agent, skill }) => (
             <PairRow
@@ -283,8 +306,14 @@ export default function Agents() {
           {/* Standalone skills (no matching agent) */}
           {standaloneSkills.length > 0 && (
             <>
-              <div className="pt-4 pb-1">
-                <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Standalone Skills</p>
+              <div className="mb-1 mt-6 flex items-center gap-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-co-fg/45">
+                  Standalone Skills
+                </p>
+                <span className="rounded-full bg-co-fg/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-co-fg/55">
+                  {standaloneSkills.length}
+                </span>
+                <span className="h-px flex-1 bg-co-fg/[0.08]" />
               </div>
               {standaloneSkills.map(skill => (
                 <SkillOnlyRow
@@ -298,6 +327,7 @@ export default function Agents() {
           )}
         </div>
       )}
+      </div>
 
       {/* Unified modal */}
       {modal && (
@@ -307,26 +337,29 @@ export default function Agents() {
           wide
           footer={
             <>
-              <button onClick={() => setModal(null)} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">
+              <button
+                onClick={() => setModal(null)}
+                className="rounded-co-sm px-4 py-2 text-sm font-medium text-co-fg/60 transition-colors hover:bg-co-fg/[0.05] hover:text-co-fg"
+              >
                 Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition-colors"
+                className="rounded-co-sm bg-co-primary px-4 py-2 text-sm font-semibold text-co-primary-fg transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? 'Saving…' : 'Save'}
               </button>
             </>
           }
         >
           {saveError && (
-            <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 text-red-700 dark:text-red-400 text-sm mb-4">{saveError}</div>
+            <div className="mb-4 rounded-co-sm border border-co-destructive/30 bg-co-destructive/[0.06] px-3 py-2 text-sm text-co-destructive">{saveError}</div>
           )}
 
           {/* Tabs */}
           {showSkillTab && (
-            <div className="flex border-b border-gray-200 dark:border-gray-700 mb-5 -mt-1">
+            <div className="-mt-1 mb-5 flex border-b border-co-fg/10">
               <TabBtn active={activeTab === 'agent'} onClick={() => setActiveTab('agent')}
                 icon="🤖" label="Agent" />
               <TabBtn active={activeTab === 'skill'} onClick={() => setActiveTab('skill')}
@@ -420,83 +453,144 @@ export default function Agents() {
 
 // ─── sub-components ──────────────────────────────────────────────────────────
 
+const AGENT_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="6" width="18" height="12" rx="2" />
+    <circle cx="9" cy="12" r="1" fill="currentColor" />
+    <circle cx="15" cy="12" r="1" fill="currentColor" />
+    <path d="M8 6V4M16 6V4M12 18v2" opacity="0.6" />
+  </svg>
+)
+
+const SKILL_ICON = (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+  </svg>
+)
+
+const EDIT_ICON = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+  </svg>
+)
+
+const TRASH_ICON = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </svg>
+)
+
 function PairRow({ agent, skill, onEdit, onDeleteAgent, onDeleteSkill }) {
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden hover:border-gray-300 dark:hover:border-gray-600 transition-colors">
+    <div className="group relative overflow-hidden rounded-co-lg border border-co-fg/10 bg-co-surface transition-all hover:-translate-y-0.5 hover:border-co-fg/20 hover:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.2)]">
+      {/* Subtle accent stripe on hover */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px opacity-0 transition-opacity group-hover:opacity-50"
+        style={{
+          background:
+            'linear-gradient(90deg, transparent, rgb(var(--co-accent-rgb)), transparent)',
+        }}
+      />
       <div className="flex items-stretch">
         {/* Agent side */}
-        <div className="flex-1 flex items-start gap-3 px-4 py-3 border-r border-gray-100 dark:border-gray-800">
-          <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-900 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-            <svg className="w-4 h-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H4a2 2 0 01-2-2V5a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2h-1" />
-            </svg>
+        <div className="flex flex-1 items-start gap-3 border-r border-co-fg/[0.06] px-4 py-3.5">
+          <div
+            className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-co"
+            style={{
+              background: 'linear-gradient(135deg, #6366f126, #6366f10d)',
+              boxShadow: 'inset 0 0 0 1px #6366f133',
+              color: '#6366f1',
+            }}
+          >
+            {AGENT_ICON}
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-900 dark:text-white">{agent.name || agent.filename}</span>
+              <span className="truncate text-sm font-semibold tracking-tight text-co-fg">
+                {agent.name || agent.filename}
+              </span>
               {agent.model && (
-                <span className="text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950 px-1.5 py-0.5 rounded font-mono">{agent.model}</span>
+                <span
+                  className="rounded-co-sm px-1.5 py-0.5 font-mono text-[10px] font-medium"
+                  style={{
+                    background: '#6366f114',
+                    color: '#6366f1',
+                  }}
+                >
+                  {agent.model}
+                </span>
               )}
             </div>
             {agent.description && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-1">{agent.description}</p>
+              <p className="mt-0.5 line-clamp-1 text-xs text-co-fg/55">{agent.description}</p>
             )}
           </div>
         </div>
 
         {/* Skill side */}
-        <div className="flex-1 flex items-start gap-3 px-4 py-3">
+        <div className="flex flex-1 items-start gap-3 px-4 py-3.5">
           {skill ? (
             <>
-              <div className="w-8 h-8 bg-yellow-100 dark:bg-yellow-900 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+              <div
+                className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-co"
+                style={{
+                  background: 'linear-gradient(135deg, #f59e0b26, #f59e0b0d)',
+                  boxShadow: 'inset 0 0 0 1px #f59e0b33',
+                  color: '#d97706',
+                }}
+              >
+                {SKILL_ICON}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{skill.name || skill.dirname}</span>
-                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                    skill['user-invocable'] !== false ? 'text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900' : 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800'
-                  }`}>
+                  <span className="truncate text-sm font-semibold tracking-tight text-co-fg">
+                    {skill.name || skill.dirname}
+                  </span>
+                  <span
+                    className={`rounded-co-sm px-1.5 py-0.5 text-[10px] font-medium ${
+                      skill['user-invocable'] !== false
+                        ? 'bg-co-success/15 text-co-success'
+                        : 'bg-co-fg/[0.06] text-co-fg/55'
+                    }`}
+                  >
                     {skill['user-invocable'] !== false ? 'user' : 'internal'}
                   </span>
                 </div>
                 {skill.description && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-1">{skill.description}</p>
+                  <p className="mt-0.5 line-clamp-1 text-xs text-co-fg/55">{skill.description}</p>
                 )}
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-gray-300 dark:text-gray-600">
-              <div className="w-8 h-8 bg-gray-50 dark:bg-gray-800 rounded-lg flex items-center justify-center shrink-0">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-co border border-dashed border-co-fg/15 text-co-fg/30">
+                {SKILL_ICON}
               </div>
-              <span className="text-xs text-gray-400 dark:text-gray-500 italic">No skill linked</span>
+              <span className="text-xs italic text-co-fg/40">No skill linked</span>
             </div>
           )}
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-1 px-3 border-l border-gray-100 dark:border-gray-800">
-          <button onClick={onEdit}
-            className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 rounded-lg transition-colors"
-            title="Edit agent & skill">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
+        <div className="flex items-center gap-1 border-l border-co-fg/[0.06] px-2">
+          <button
+            onClick={onEdit}
+            className="flex h-8 w-8 items-center justify-center rounded-co-sm text-co-fg/45 transition-colors hover:bg-co-fg/[0.06] hover:text-co-fg"
+            title="Edit agent & skill"
+          >
+            {EDIT_ICON}
           </button>
-          <button onClick={onDeleteAgent}
-            className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg transition-colors"
-            title="Delete agent">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
+          <button
+            onClick={onDeleteAgent}
+            className="flex h-8 w-8 items-center justify-center rounded-co-sm text-co-fg/45 transition-colors hover:bg-co-destructive/10 hover:text-co-destructive"
+            title="Delete agent"
+          >
+            {TRASH_ICON}
           </button>
         </div>
       </div>
@@ -506,43 +600,56 @@ function PairRow({ agent, skill, onEdit, onDeleteAgent, onDeleteSkill }) {
 
 function SkillOnlyRow({ skill, onEdit, onDelete }) {
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden hover:border-gray-300 dark:hover:border-gray-600 transition-colors">
+    <div className="group relative overflow-hidden rounded-co-lg border border-co-fg/10 bg-co-surface transition-all hover:-translate-y-0.5 hover:border-co-fg/20 hover:shadow-[0_8px_24px_-16px_rgba(0,0,0,0.2)]">
       <div className="flex items-stretch">
-        <div className="flex-1 flex items-start gap-3 px-4 py-3">
-          <div className="w-8 h-8 bg-yellow-100 dark:bg-yellow-900 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-            <svg className="w-4 h-4 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+        <div className="flex flex-1 items-start gap-3 px-4 py-3.5">
+          <div
+            className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-co"
+            style={{
+              background: 'linear-gradient(135deg, #f59e0b26, #f59e0b0d)',
+              boxShadow: 'inset 0 0 0 1px #f59e0b33',
+              color: '#d97706',
+            }}
+          >
+            {SKILL_ICON}
           </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-900 dark:text-white">{skill.name || skill.dirname}</span>
-              <span className="text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">{skill.dirname}</span>
-              <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                skill['user-invocable'] !== false ? 'text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900' : 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800'
-              }`}>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="truncate text-sm font-semibold tracking-tight text-co-fg">
+                {skill.name || skill.dirname}
+              </span>
+              <span className="rounded-co-sm bg-co-fg/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-co-fg/55">
+                {skill.dirname}
+              </span>
+              <span
+                className={`rounded-co-sm px-1.5 py-0.5 text-[10px] font-medium ${
+                  skill['user-invocable'] !== false
+                    ? 'bg-co-success/15 text-co-success'
+                    : 'bg-co-fg/[0.06] text-co-fg/55'
+                }`}
+              >
                 {skill['user-invocable'] !== false ? 'user' : 'internal'}
               </span>
             </div>
             {skill.description && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-1">{skill.description}</p>
+              <p className="mt-0.5 line-clamp-1 text-xs text-co-fg/55">{skill.description}</p>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1 px-3 border-l border-gray-100 dark:border-gray-800">
-          <button onClick={onEdit}
-            className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 rounded-lg transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
+        <div className="flex items-center gap-1 border-l border-co-fg/[0.06] px-2">
+          <button
+            onClick={onEdit}
+            className="flex h-8 w-8 items-center justify-center rounded-co-sm text-co-fg/45 transition-colors hover:bg-co-fg/[0.06] hover:text-co-fg"
+            title="Edit skill"
+          >
+            {EDIT_ICON}
           </button>
-          <button onClick={onDelete}
-            className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
+          <button
+            onClick={onDelete}
+            className="flex h-8 w-8 items-center justify-center rounded-co-sm text-co-fg/45 transition-colors hover:bg-co-destructive/10 hover:text-co-destructive"
+            title="Delete skill"
+          >
+            {TRASH_ICON}
           </button>
         </div>
       </div>
@@ -554,13 +661,15 @@ function TabBtn({ active, onClick, icon, label }) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+      className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
         active
-          ? 'border-indigo-600 text-indigo-600'
-          : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600'
+          ? 'border-co-fg text-co-fg'
+          : 'border-transparent text-co-fg/50 hover:border-co-fg/20 hover:text-co-fg/80'
       }`}
     >
-      <span>{icon}</span>
+      <span className={active ? 'text-co-fg' : 'text-co-fg/45'}>
+        {icon === '🤖' ? AGENT_ICON : icon === '⚡' ? SKILL_ICON : icon}
+      </span>
       {label}
     </button>
   )
@@ -569,9 +678,11 @@ function TabBtn({ active, onClick, icon, label }) {
 function Field({ label, hint, children }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1.5">
+      <label className="mb-1.5 block text-sm font-medium text-co-fg/80">
         {label}
-        {hint && <span className="text-xs text-gray-400 dark:text-gray-500 font-normal ml-1.5">— {hint}</span>}
+        {hint && (
+          <span className="ml-1.5 font-normal text-xs text-co-fg/45">— {hint}</span>
+        )}
       </label>
       {children}
     </div>

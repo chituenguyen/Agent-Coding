@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
 import Modal from '../components/Modal'
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const EMPTY_FORM = { filename: '', content: '' }
 
@@ -58,10 +60,10 @@ export default function Commands() {
   }
 
   async function handleDelete(filename) {
-    if (!confirm(`Delete command "${filename}"?`)) return
+    if (!(await dialog.confirm({ message: `Delete command "${filename}"?`, tone: "danger", confirmLabel: "Delete" }))) return
     setDeleting(filename)
     try { await api.deleteCommand(filename); load() }
-    catch (e) { alert(e.message) }
+    catch (e) { toast.error(e.message) }
     finally { setDeleting(null) }
   }
 

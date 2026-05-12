@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { api } from '../api'
 import Modal from '../components/Modal'
 import RepoGraph from '../components/RepoGraph'
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 
 // ─── enums ─────────────────────────────────────────────────────────────────
@@ -90,11 +92,11 @@ export default function Mcp() {
     if (!form.name.trim()) return
     setSaving(true)
     try { await api.upsertMcp(form.scope, form.name.trim(), configFromForm(form)); await load(); setModal(null) }
-    catch (err) { alert('Failed to save: ' + err.message) }
+    catch (err) { toast.error('Failed to save: ' + err.message) }
     finally { setSaving(false) }
   }
   async function handleDelete(scope, name) {
-    if (!confirm(`Remove "${name}" from ${scope} MCPs?`)) return
+    if (!(await dialog.confirm({ message: `Remove "${name}" from ${scope} MCPs?`, tone: "danger", confirmLabel: "Delete" }))) return
     await api.deleteMcp(scope, name); load()
   }
   async function handleCatalogAdd(item) {
@@ -140,13 +142,13 @@ export default function Mcp() {
       setAddRepoModal(false)
       setAddRepoForm({ path: '', name: '' })
       await loadRepos()
-    } catch (err) { alert('Failed to add repository: ' + err.message) }
+    } catch (err) { toast.error('Failed to add repository: ' + err.message) }
     finally { setAddRepoSaving(false) }
   }
   async function handleDeleteRepo(name) {
-    if (!confirm(`Remove repository "${name}"?\n\nThe projects/${name}/ folder (task history, context) will be kept.`)) return
+    if (!(await dialog.confirm({ message: `Remove repository "${name}"?\n\nThe projects/${name}/ folder (task history, context) will be kept.`, tone: "danger", confirmLabel: "Delete" }))) return
     try { await api.deleteRepository(name); await loadRepos() }
-    catch (err) { alert('Failed to remove: ' + err.message) }
+    catch (err) { toast.error('Failed to remove: ' + err.message) }
   }
 
   // ─── Catalog handlers ───
@@ -168,7 +170,7 @@ export default function Mcp() {
       await load()
       setCatalogModal(false)
       setCatalogForm({ name: '', label: '', icon: '🔌', category: '', description: '', command: '', args: '', env: [{ k: '', v: '' }] })
-    } catch (err) { alert('Failed to save: ' + err.message) }
+    } catch (err) { toast.error('Failed to save: ' + err.message) }
     finally { setCatalogSaving(false) }
   }
 
@@ -193,11 +195,11 @@ export default function Mcp() {
       await api.upsertRepoMcp(project, form.name.trim(), configFromForm(form))
       const d = await api.getRepoMcp(project); setRepoMcpServers(d.mcpServers || {})
       loadRepos(); setRepoModal(null)
-    } catch (err) { alert('Failed to save: ' + err.message) }
+    } catch (err) { toast.error('Failed to save: ' + err.message) }
     finally { setRepoSaving(false) }
   }
   async function handleRepoDelete(project, name) {
-    if (!confirm(`Remove "${name}" from ${project}?`)) return
+    if (!(await dialog.confirm({ message: `Remove "${name}" from ${project}?`, tone: "danger", confirmLabel: "Delete" }))) return
     await api.deleteRepoMcp(project, name)
     const d = await api.getRepoMcp(project); setRepoMcpServers(d.mcpServers || {})
     loadRepos()

@@ -4,6 +4,8 @@ import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
 import LiveFilePanel from "../components/LiveFilePanel";
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const ROLE_STYLES = {
   user: "bg-amber-500 text-white shadow-md shadow-amber-200/50 dark:shadow-none",
@@ -535,7 +537,7 @@ export default function Investigate() {
 
   async function deleteChat(id, e) {
     e.stopPropagation();
-    if (!confirm("Delete this investigation?")) return;
+    if (!(await dialog.confirm({ message: "Delete this investigation?", tone: "danger", confirmLabel: "Delete" }))) return;
     await api.deleteChat(id);
     setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -765,7 +767,7 @@ export default function Investigate() {
         setAttachments((prev) =>
           prev.filter((a) => a._localId !== placeholder._localId),
         );
-        alert(`Upload failed for ${file.name}: ${err.message}`);
+        toast.error(`Upload failed for ${file.name}: ${err.message}`);
       }
     }
   }
@@ -891,7 +893,7 @@ export default function Investigate() {
       }, 800);
     } catch {
       setPushState("idle");
-      alert("Failed to push to queue");
+      toast.error("Failed to push to queue");
     }
   }
 

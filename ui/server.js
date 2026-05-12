@@ -1000,6 +1000,273 @@ async function findTeam(companyId, teamId) {
   return null;
 }
 
+// ─── companies CRUD ─────────────────────────────────────────────────────────
+
+function slugifyCompanyId(s) {
+  return String(s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+async function readCompaniesFile() {
+  const raw = await readFile(path.join(WORKSPACE, "companies.json"), "utf8");
+  return JSON.parse(raw);
+}
+
+async function writeCompaniesFile(data) {
+  await writeFile(
+    path.join(WORKSPACE, "companies.json"),
+    JSON.stringify(data, null, 2) + "\n",
+    "utf8",
+  );
+}
+
+function defaultEngineerRoom(repoPath) {
+  const repos = repoPath ? [repoPath] : [];
+  return {
+    id: "engineer",
+    name: "Engineer Room",
+    description:
+      "Cross-functional engineering — FE, BE, DevOps, Solution Architect",
+    kind: "engineer",
+    teams: [
+      {
+        id: "frontend",
+        name: "Frontend",
+        tagline: "React, Next.js, dashboards",
+        agent: "coder-frontend",
+        color: "#3b82f6",
+        icon: "🎨",
+        repos: [...repos],
+      },
+      {
+        id: "backend",
+        name: "Backend",
+        tagline: "APIs, services, business logic",
+        agent: "coder-backend",
+        color: "#10b981",
+        icon: "⚙️",
+        repos: [...repos],
+      },
+      {
+        id: "devops",
+        name: "DevOps",
+        tagline: "K8s, CI/CD, infrastructure",
+        agent: "devops",
+        color: "#f97316",
+        icon: "🚀",
+        repos: [...repos],
+      },
+      {
+        id: "architect",
+        name: "Solution Architect",
+        tagline: "Cross-team design, specs, integration",
+        agent: "architect",
+        color: "#8b5cf6",
+        icon: "🏛️",
+        repos: [...repos],
+      },
+    ],
+  };
+}
+
+// Persist an uploaded logo (base64 data URL) to ui/public/logos/{id}/logo.{ext}
+// and return the public URL ("/logos/{id}/logo.{ext}").
+async function saveCompanyLogo(companyId, logoInput) {
+  if (!logoInput) return null;
+  // If a string URL/path is passed in, just return it as-is.
+  if (typeof logoInput === "string") return logoInput || null;
+  const { dataUrl, filename } = logoInput;
+  if (!dataUrl) return null;
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) throw new Error("logo dataUrl must be a base64 data URL");
+  const mime = match[1];
+  const buf = Buffer.from(match[2], "base64");
+  if (buf.length > 5 * 1024 * 1024)
+    throw new Error("Logo too large (max 5 MB)");
+  const extFromMime = (mime.split("/")[1] || "png").replace("+xml", "");
+  const ext = (filename?.split(".").pop() || extFromMime).toLowerCase();
+  const safeExt = /^[a-z0-9]{1,5}$/.test(ext) ? ext : "png";
+  const dir = path.join(__dirname, "public", "logos", companyId);
+  await mkdir(dir, { recursive: true });
+  const fullPath = path.join(dir, `logo.${safeExt}`);
+  await writeFile(fullPath, buf);
+  return `/logos/${companyId}/logo.${safeExt}?v=${Date.now()}`;
+}
+
+app.post("/api/companies", async (req, res) => {
+  try {
+    const {
+      name,
+      tagline = "",
+      accent = "#6b7280",
+      logo = null,
+      repoPath = "",
+      init = false,
+      id: rawId,
+    } = req.body || {};
+    if (!name?.trim())
+      return res.status(400).json({ error: "name is required" });
+    const data = await readCompaniesFile();
+    const list = data.companies || (data.companies = []);
+
+    const id = (rawId ? slugifyCompanyId(rawId) : slugifyCompanyId(name)) || null;
+    if (!id) return res.status(400).json({ error: "could not derive id from name" });
+    if (list.some((c) => c.id === id))
+      return res.status(409).json({ error: `company '${id}' already exists` });
+
+    const trimmedPath = String(repoPath || "").trim();
+    if (trimmedPath) {
+      if (!path.isAbsolute(trimmedPath))
+        return res.status(400).json({ error: "repoPath must be absolute" });
+      if (!existsSync(trimmedPath)) {
+        if (init) {
+          await mkdir(trimmedPath, { recursive: true });
+        } else {
+          return res
+            .status(400)
+            .json({ error: "repoPath does not exist (pass init=true to create it)" });
+        }
+      } else {
+        const st = await stat(trimmedPath);
+        if (!st.isDirectory())
+          return res.status(400).json({ error: "repoPath is not a directory" });
+      }
+    }
+
+    let logoUrl = null;
+    try {
+      logoUrl = await saveCompanyLogo(id, logo);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+
+    const company = {
+      id,
+      name: name.trim(),
+      tagline: tagline.trim(),
+      accent,
+      ...(logoUrl ? { logo: logoUrl } : {}),
+      rooms: [defaultEngineerRoom(trimmedPath)],
+    };
+    list.push(company);
+    await writeCompaniesFile(data);
+    res.status(201).json(company);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/companies/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { name, tagline, accent, logo } = req.body || {};
+    const data = await readCompaniesFile();
+    const company = (data.companies || []).find((c) => c.id === companyId);
+    if (!company) return res.status(404).json({ error: "company not found" });
+
+    if (typeof name === "string" && name.trim()) company.name = name.trim();
+    if (typeof tagline === "string") company.tagline = tagline.trim();
+    if (typeof accent === "string" && accent.trim()) company.accent = accent.trim();
+    if (logo !== undefined) {
+      if (logo === null || logo === "") {
+        delete company.logo;
+      } else {
+        try {
+          const url = await saveCompanyLogo(companyId, logo);
+          if (url) company.logo = url;
+        } catch (e) {
+          return res.status(400).json({ error: e.message });
+        }
+      }
+    }
+
+    await writeCompaniesFile(data);
+    res.json(company);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/companies/:companyId/teams/:teamId", async (req, res) => {
+  try {
+    const { companyId, teamId } = req.params;
+    const { repos, name, tagline, agent, color, icon } = req.body || {};
+    const data = await readCompaniesFile();
+    const company = (data.companies || []).find((c) => c.id === companyId);
+    if (!company) return res.status(404).json({ error: "company not found" });
+    let team = null;
+    let room = null;
+    for (const r of company.rooms || []) {
+      for (const t of r.teams || []) {
+        if (t.id === teamId) {
+          team = t;
+          room = r;
+        }
+      }
+    }
+    if (!team) return res.status(404).json({ error: "team not found" });
+
+    if (Array.isArray(repos)) {
+      // Validate + dedupe + must be absolute, must exist (directory)
+      const seen = new Set();
+      const cleaned = [];
+      for (const raw of repos) {
+        const p = String(raw || "").trim();
+        if (!p) continue;
+        if (!path.isAbsolute(p))
+          return res.status(400).json({ error: `repo path must be absolute: ${p}` });
+        if (seen.has(p)) continue;
+        seen.add(p);
+        if (!existsSync(p))
+          return res.status(400).json({ error: `path does not exist: ${p}` });
+        const st = await stat(p);
+        if (!st.isDirectory())
+          return res.status(400).json({ error: `not a directory: ${p}` });
+        cleaned.push(p);
+      }
+      team.repos = cleaned;
+    }
+    if (typeof name === "string" && name.trim()) team.name = name.trim();
+    if (typeof tagline === "string") team.tagline = tagline.trim();
+    if (typeof agent === "string" && agent.trim()) team.agent = agent.trim();
+    if (typeof color === "string" && color.trim()) team.color = color.trim();
+    if (typeof icon === "string") team.icon = icon;
+
+    await writeCompaniesFile(data);
+    res.json({ company, room, team });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/companies/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const data = await readCompaniesFile();
+    const before = (data.companies || []).length;
+    data.companies = (data.companies || []).filter((c) => c.id !== companyId);
+    if (data.companies.length === before)
+      return res.status(404).json({ error: "company not found" });
+    await writeCompaniesFile(data);
+    // Best-effort cleanup of the uploaded logo dir (doesn't touch the user's repo)
+    try {
+      await rm(path.join(__dirname, "public", "logos", companyId), {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // ignore
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/repositories", async (req, res) => {
   try {
     const repos = await getRepos();
@@ -2460,7 +2727,7 @@ app.patch("/api/chats/:id", async (req, res) => {
     chat.title = req.body.title.trim().slice(0, 200) || chat.title;
   if (
     typeof req.body.model === "string" &&
-    ["sonnet", "opus", "haiku"].includes(req.body.model)
+    ["sonnet", "opus", "opus-4-6", "haiku"].includes(req.body.model)
   )
     chat.model = req.body.model;
   if (Array.isArray(req.body.folderPaths)) {
@@ -3250,8 +3517,17 @@ wss.on("connection", (ws, req) => {
         args.push("--session-id", chat.sessionId);
       }
 
-      if (chat.model && ["sonnet", "opus", "haiku"].includes(chat.model)) {
-        args.push("--model", chat.model);
+      if (chat.model) {
+        // Map UI ids to the actual --model flag value. "opus-4-6" is the older
+        // Opus generation; pass its full model id since the CLI alias is "opus".
+        const modelMap = {
+          sonnet: "sonnet",
+          opus: "opus",
+          "opus-4-6": "claude-opus-4-6",
+          haiku: "haiku",
+        };
+        const arg = modelMap[chat.model];
+        if (arg) args.push("--model", arg);
       }
 
       // Investigations and other dedicated-agent chats route every turn through
@@ -3791,7 +4067,7 @@ setInterval(queueTick, 5000);
 const PORT = process.env.PORT || 3001;
 migrateProjectMcpFiles().catch(() => {});
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Uri Platform UI → http://localhost:${PORT}`);
+  console.log(`ZIO Platform UI → http://localhost:${PORT}`);
   console.log(`Workspace: ${WORKSPACE}`);
   console.log(`Queue cron: polling every 5s`);
 });

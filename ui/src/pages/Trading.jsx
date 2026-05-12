@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
+import { toast } from "sonner";
+import { dialog } from "../components/Dialog";
 
 const ROLE_STYLES = {
   user: "bg-emerald-600 text-white shadow-md shadow-emerald-200/40 dark:shadow-none",
@@ -600,7 +602,7 @@ export default function Trading() {
 
   async function deleteChat(id, e) {
     e.stopPropagation();
-    if (!confirm("Delete this analysis?")) return;
+    if (!(await dialog.confirm({ message: "Delete this analysis?", tone: "danger", confirmLabel: "Delete" }))) return;
     await api.deleteChat(id);
     setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
