@@ -2142,6 +2142,49 @@ async function readSettings() {
   }
 }
 
+// ─── workspace name (stored in gitignored file at workspace root) ────────────
+
+const WORKSPACE_NAME_FILE = path.join(WORKSPACE, ".workspace-name");
+const DEFAULT_WORKSPACE_NAME = "Platform";
+
+async function readWorkspaceName() {
+  try {
+    const raw = (await readFile(WORKSPACE_NAME_FILE, "utf8")).trim();
+    if (!raw) return { name: DEFAULT_WORKSPACE_NAME, custom: false };
+    return { name: raw, custom: true };
+  } catch {
+    return { name: DEFAULT_WORKSPACE_NAME, custom: false };
+  }
+}
+
+app.get("/api/workspace-name", async (req, res) => {
+  try {
+    res.json(await readWorkspaceName());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/workspace-name", async (req, res) => {
+  try {
+    const next = String(req.body?.name || "").trim();
+    if (!next) {
+      try {
+        await rm(WORKSPACE_NAME_FILE);
+      } catch {
+        /* ignore */
+      }
+      return res.json({ name: DEFAULT_WORKSPACE_NAME, custom: false });
+    }
+    if (next.length > 64)
+      return res.status(400).json({ error: "Name too long (max 64 chars)" });
+    await writeFile(WORKSPACE_NAME_FILE, next);
+    res.json({ name: next, custom: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/settings", async (req, res) => {
   try {
     res.json(await readSettings());

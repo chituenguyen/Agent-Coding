@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { api } from "../api";
 
 // ─── refined 2-tone SVG icons ───────────────────────────────────────────────
 
@@ -116,23 +117,7 @@ const configure = [
   { to: "/usage", label: "Usage", icon: IconUsage },
 ];
 
-const STORAGE_KEY = "URI:workspace-name";
-
-function loadWorkspaceName() {
-  try {
-    return localStorage.getItem(STORAGE_KEY) || "URI Platform";
-  } catch {
-    return "URI Platform";
-  }
-}
-
-function saveWorkspaceName(name) {
-  try {
-    localStorage.setItem(STORAGE_KEY, name);
-  } catch {
-    /* noop */
-  }
-}
+const DEFAULT_WORKSPACE_NAME = "Platform";
 
 // ─── nav item ───────────────────────────────────────────────────────────────
 
@@ -188,7 +173,9 @@ function NavItem({ to, label, icon: Icon, end, onClick, collapsed }) {
           )}
           <span
             className={`flex h-5 w-5 shrink-0 items-center justify-center transition-colors ${
-              isActive ? "text-indigo-200" : "text-slate-500 group-hover:text-slate-300"
+              isActive
+                ? "text-indigo-200"
+                : "text-slate-500 group-hover:text-slate-300"
             }`}
           >
             <Icon />
@@ -203,15 +190,29 @@ function NavItem({ to, label, icon: Icon, end, onClick, collapsed }) {
 // ─── workspace name (editable) ─────────────────────────────────────────────
 
 function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
-  const [name, setName] = useState(loadWorkspaceName);
+  const [name, setName] = useState(DEFAULT_WORKSPACE_NAME);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(name);
+  const [draft, setDraft] = useState("");
   const inputRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getWorkspaceName()
+      .then((r) => {
+        if (!cancelled) setName(r?.name || DEFAULT_WORKSPACE_NAME);
+      })
+      .catch(() => {
+        /* keep default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (editing) {
       setDraft(name);
-      // focus & select on next tick
       requestAnimationFrame(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -219,16 +220,14 @@ function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
     }
   }, [editing, name]);
 
-  function commit() {
-    const v = draft.trim() || "URI Platform";
-    setName(v);
-    saveWorkspaceName(v);
+  async function commit() {
+    const v = draft.trim();
     setEditing(false);
-    // Update document title too
     try {
-      document.title = v;
+      const r = await api.setWorkspaceName(v);
+      setName(r?.name || DEFAULT_WORKSPACE_NAME);
     } catch {
-      /* noop */
+      /* keep current */
     }
   }
 
@@ -237,7 +236,6 @@ function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
     setDraft(name);
   }
 
-  // Keep document title in sync on first mount
   useEffect(() => {
     try {
       document.title = name;
@@ -248,7 +246,9 @@ function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
 
   return (
     <div className={collapsed ? "px-2 pb-4 pt-4" : "px-4 pb-5 pt-5"}>
-      <div className={`group flex items-center ${collapsed ? "justify-center" : "gap-3"}`}>
+      <div
+        className={`group flex items-center ${collapsed ? "justify-center" : "gap-3"}`}
+      >
         {/* Logo monogram with subtle gradient */}
         <button
           type="button"
@@ -316,7 +316,16 @@ function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
               title="Collapse sidebar"
               className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-500 transition-all hover:bg-white/[0.06] hover:text-slate-200 md:flex"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <polyline points="15 18 9 12 15 6" />
               </svg>
             </button>
@@ -333,7 +342,11 @@ function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
                 strokeWidth="2"
                 viewBox="0 0 24 24"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </>
@@ -361,11 +374,9 @@ export default function Sidebar({ theme, setTheme }) {
   }
 
   const currentLabel =
-    [
-      ...main,
-      ...configure,
-      { to: "/settings", label: "Settings" },
-    ].find((l) => location.pathname.startsWith(l.to))?.label || "Tasks";
+    [...main, ...configure, { to: "/settings", label: "Settings" }].find((l) =>
+      location.pathname.startsWith(l.to),
+    )?.label || "Tasks";
 
   const body = (
     <>
@@ -375,9 +386,17 @@ export default function Sidebar({ theme, setTheme }) {
         onToggleCollapse={toggleCollapsed}
       />
 
-      <div className={collapsed ? "mx-3 mb-3 h-px bg-white/5" : "mx-3 mb-3 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"} />
+      <div
+        className={
+          collapsed
+            ? "mx-3 mb-3 h-px bg-white/5"
+            : "mx-3 mb-3 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
+        }
+      />
 
-      <nav className={`flex-1 overflow-y-auto pb-2 ${collapsed ? "px-2 space-y-1.5" : "px-3 space-y-0.5"} ${collapsed ? "flex flex-col items-center" : ""}`}>
+      <nav
+        className={`flex-1 overflow-y-auto pb-2 ${collapsed ? "px-2 space-y-1.5" : "px-3 space-y-0.5"} ${collapsed ? "flex flex-col items-center" : ""}`}
+      >
         {main.map((l) => (
           <NavItem key={l.to} {...l} onClick={close} collapsed={collapsed} />
         ))}
@@ -400,8 +419,12 @@ export default function Sidebar({ theme, setTheme }) {
         ))}
       </nav>
 
-      <div className={`border-t border-white/[0.06] py-3 ${collapsed ? "px-2" : "px-3"}`}>
-        <div className={`flex items-center gap-1 ${collapsed ? "flex-col" : ""}`}>
+      <div
+        className={`border-t border-white/[0.06] py-3 ${collapsed ? "px-2" : "px-3"}`}
+      >
+        <div
+          className={`flex items-center gap-1 ${collapsed ? "flex-col" : ""}`}
+        >
           <NavLink
             to="/settings"
             onClick={close}
@@ -437,7 +460,16 @@ export default function Sidebar({ theme, setTheme }) {
               title="Expand sidebar"
               className="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-slate-100"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <polyline points="9 18 15 12 9 6" />
               </svg>
             </button>
@@ -479,7 +511,11 @@ export default function Sidebar({ theme, setTheme }) {
             strokeWidth="2"
             viewBox="0 0 24 24"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M4 6h16M4 12h16M4 18h16"
+            />
           </svg>
         </button>
         <span className="text-sm font-semibold text-white">{currentLabel}</span>

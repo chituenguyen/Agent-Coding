@@ -72,6 +72,10 @@ export const api = {
   resetSubtask: (project, taskId, subtaskId) =>
     req("POST", `/tasks/${project}/${taskId}/subtasks/${subtaskId}/reset`),
 
+  // Workspace name (gitignored file at workspace root)
+  getWorkspaceName: () => req("GET", "/workspace-name"),
+  setWorkspaceName: (name) => req("PUT", "/workspace-name", { name }),
+
   // Settings
   getSettings: () => req("GET", "/settings"),
   saveSettings: (data) => req("PUT", "/settings", data),
