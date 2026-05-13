@@ -151,7 +151,8 @@ export const api = {
   uploadAttachment: (data) => req("POST", "/uploads", data),
 
   // Chat
-  getChats: (kind, companyId) => req("GET", `/chats${qs({ kind, companyId })}`),
+  getChats: (kind, companyId, teamId) =>
+    req("GET", `/chats${qs({ kind, companyId, teamId })}`),
   createChat: (data) => req("POST", "/chats", data || {}),
   getChat: (id) => req("GET", `/chats/${id}`),
   renameChat: (id, title) => req("PATCH", `/chats/${id}`, { title }),

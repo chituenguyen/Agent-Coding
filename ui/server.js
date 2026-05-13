@@ -3130,6 +3130,7 @@ app.get("/api/chats", async (req, res) => {
     const files = await readdir(chatsDir());
     const wantKind = req.query.kind || "chat";
     const wantCompany = req.query.companyId || null;
+    const wantTeam = req.query.teamId || null;
     const chats = await Promise.all(
       files
         .filter((f) => f.endsWith(".json"))
@@ -3142,6 +3143,7 @@ app.get("/api/chats", async (req, res) => {
             if (kind !== wantKind) return null;
             if (wantCompany && (c.companyId || null) !== wantCompany)
               return null;
+            if (wantTeam && (c.teamId || null) !== wantTeam) return null;
             return {
               id: c.id,
               title: c.title,
@@ -3206,7 +3208,7 @@ app.post("/api/chats", async (req, res) => {
       // (PATCH /api/chats/:id with folderPaths). Default to WORKSPACE only so
       // the agent doesn't waste context on repos the user didn't ask for.
       folderPaths = [WORKSPACE];
-      title = `${found.company.name} · ${found.team.name}`;
+      title = "New thread";
     } else if (
       typeof req.body?.companyId === "string" &&
       req.body.companyId.trim()
@@ -4063,11 +4065,9 @@ wss.on("connection", (ws, req) => {
           : {}),
       });
       chat.updatedAt = now;
-      if (
-        chat.messages.length === 1 ||
-        !chat.title ||
-        chat.title === "New chat"
-      ) {
+      const isPlaceholder =
+        !chat.title || chat.title === "New chat" || chat.title === "New thread";
+      if (chat.messages.length === 1 || isPlaceholder) {
         chat.title =
           message.split("\n")[0].slice(0, 80) ||
           (attachmentList[0]?.filename ?? "New chat");
