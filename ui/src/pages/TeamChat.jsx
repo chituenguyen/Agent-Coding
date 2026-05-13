@@ -97,12 +97,16 @@ export default function TeamChat() {
 
         if (threadId) {
           // Explicit thread requested
-          const active = await api.getChat(threadId);
-          if (!active) {
-            // 404 — thread was deleted / bad URL. Fall back to newest or create.
+          let active;
+          try {
+            active = await api.getChat(threadId);
+          } catch {
+            // 404 / deleted thread / bad URL — fall back to newest or create.
             const fallback = list[0]
               ? await api.getChat(list[0].id)
               : await api.createChat({ kind: "team", companyId, teamId });
+            if (cancelled) return;
+            if (!list[0]) setThreads([fallback]);
             navigate(`/co/${companyId}/team/${teamId}/t/${fallback.id}`, {
               replace: true,
             });
