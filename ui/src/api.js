@@ -158,4 +158,70 @@ export const api = {
   deleteCompany: (id) => req("DELETE", `/companies/${id}`),
   updateTeam: (companyId, teamId, data) =>
     req("PATCH", `/companies/${companyId}/teams/${teamId}`, data),
+  addTeam: (companyId, roomId, data) =>
+    req("POST", `/companies/${companyId}/rooms/${roomId}/teams`, data),
+  deleteTeam: (companyId, roomId, teamId) =>
+    req("DELETE", `/companies/${companyId}/rooms/${roomId}/teams/${teamId}`),
+  addRoom: (companyId, data) =>
+    req("POST", `/companies/${companyId}/rooms`, data),
+  deleteRoom: (companyId, roomId) =>
+    req("DELETE", `/companies/${companyId}/rooms/${roomId}`),
+
+  // Room designer — streams NDJSON. onChunk(text) is called with raw stdout
+  // fragments as Claude generates; resolves with the parsed final result.
+  startRoomDesign: async (companyId, description, onChunk) => {
+    const res = await fetch(
+      `${BASE}/companies/${companyId}/rooms/design/start`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description }),
+      },
+    );
+    if (!res.ok) throw new Error(await res.text());
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let final = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.chunk && onChunk) onChunk(evt.chunk);
+          if (evt.done) final = evt.result;
+          if (evt.error) throw new Error(evt.error);
+        } catch (err) {
+          if (err.message?.startsWith("Unexpected")) continue;
+          throw err;
+        }
+      }
+    }
+    if (!final) throw new Error("Designer returned no result");
+    return final;
+  },
+  regenRoomAgent: (companyId, currentRoom, teamId, instructions) =>
+    req("POST", `/companies/${companyId}/rooms/design/regen-agent`, {
+      currentRoom,
+      teamId,
+      instructions,
+    }),
+  checkStaleRoomAgents: (
+    companyId,
+    currentRoom,
+    editedTeamId,
+    previousAgentDef,
+  ) =>
+    req("POST", `/companies/${companyId}/rooms/design/check-stale`, {
+      currentRoom,
+      editedTeamId,
+      previousAgentDef,
+    }),
+  finalizeRoom: (companyId, data) =>
+    req("POST", `/companies/${companyId}/rooms/design/finalize`, data),
 };

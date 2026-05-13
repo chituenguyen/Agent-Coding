@@ -1374,7 +1374,7 @@ export default function Chat() {
                 onPaste={onPaste}
                 placeholder={
                   activeId
-                    ? "Ask ZIO about your code…"
+                    ? "Ask URI about your code…"
                     : "Create a chat first"
                 }
                 disabled={!activeId || streaming}

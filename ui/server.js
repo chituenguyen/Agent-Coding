@@ -1113,8 +1113,10 @@ app.post("/api/companies", async (req, res) => {
     const data = await readCompaniesFile();
     const list = data.companies || (data.companies = []);
 
-    const id = (rawId ? slugifyCompanyId(rawId) : slugifyCompanyId(name)) || null;
-    if (!id) return res.status(400).json({ error: "could not derive id from name" });
+    const id =
+      (rawId ? slugifyCompanyId(rawId) : slugifyCompanyId(name)) || null;
+    if (!id)
+      return res.status(400).json({ error: "could not derive id from name" });
     if (list.some((c) => c.id === id))
       return res.status(409).json({ error: `company '${id}' already exists` });
 
@@ -1126,9 +1128,9 @@ app.post("/api/companies", async (req, res) => {
         if (init) {
           await mkdir(trimmedPath, { recursive: true });
         } else {
-          return res
-            .status(400)
-            .json({ error: "repoPath does not exist (pass init=true to create it)" });
+          return res.status(400).json({
+            error: "repoPath does not exist (pass init=true to create it)",
+          });
         }
       } else {
         const st = await stat(trimmedPath);
@@ -1170,7 +1172,8 @@ app.patch("/api/companies/:companyId", async (req, res) => {
 
     if (typeof name === "string" && name.trim()) company.name = name.trim();
     if (typeof tagline === "string") company.tagline = tagline.trim();
-    if (typeof accent === "string" && accent.trim()) company.accent = accent.trim();
+    if (typeof accent === "string" && accent.trim())
+      company.accent = accent.trim();
     if (logo !== undefined) {
       if (logo === null || logo === "") {
         delete company.logo;
@@ -1218,7 +1221,9 @@ app.patch("/api/companies/:companyId/teams/:teamId", async (req, res) => {
         const p = String(raw || "").trim();
         if (!p) continue;
         if (!path.isAbsolute(p))
-          return res.status(400).json({ error: `repo path must be absolute: ${p}` });
+          return res
+            .status(400)
+            .json({ error: `repo path must be absolute: ${p}` });
         if (seen.has(p)) continue;
         seen.add(p);
         if (!existsSync(p))
@@ -1238,6 +1243,429 @@ app.patch("/api/companies/:companyId/teams/:teamId", async (req, res) => {
 
     await writeCompaniesFile(data);
     res.json({ company, room, team });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a new team to a room
+app.post("/api/companies/:companyId/rooms/:roomId/teams", async (req, res) => {
+  try {
+    const { companyId, roomId } = req.params;
+    const {
+      id: rawId,
+      name,
+      tagline = "",
+      agent,
+      color = "#6b7280",
+      icon = "",
+      repos = [],
+    } = req.body || {};
+
+    if (!name?.trim())
+      return res.status(400).json({ error: "name is required" });
+    if (!agent?.trim())
+      return res.status(400).json({ error: "agent is required" });
+
+    const id = slugifyCompanyId(rawId || name);
+    if (!id)
+      return res.status(400).json({ error: "could not derive id from name" });
+
+    const data = await readCompaniesFile();
+    const company = (data.companies || []).find((c) => c.id === companyId);
+    if (!company) return res.status(404).json({ error: "company not found" });
+
+    const room = (company.rooms || []).find((r) => r.id === roomId);
+    if (!room) return res.status(404).json({ error: "room not found" });
+    if (room.kind !== "engineer")
+      return res
+        .status(400)
+        .json({ error: "teams can only be added to engineer rooms" });
+
+    room.teams = room.teams || [];
+    if (room.teams.some((t) => t.id === id))
+      return res
+        .status(409)
+        .json({ error: `team '${id}' already exists in this room` });
+
+    // Validate repos (absolute, exist, directory)
+    const cleanedRepos = [];
+    const seen = new Set();
+    for (const raw of Array.isArray(repos) ? repos : []) {
+      const p = String(raw || "").trim();
+      if (!p) continue;
+      if (!path.isAbsolute(p))
+        return res
+          .status(400)
+          .json({ error: `repo path must be absolute: ${p}` });
+      if (seen.has(p)) continue;
+      seen.add(p);
+      if (!existsSync(p))
+        return res.status(400).json({ error: `path does not exist: ${p}` });
+      const st = await stat(p);
+      if (!st.isDirectory())
+        return res.status(400).json({ error: `not a directory: ${p}` });
+      cleanedRepos.push(p);
+    }
+
+    const team = {
+      id,
+      name: name.trim(),
+      tagline: String(tagline || "").trim(),
+      agent: agent.trim(),
+      color: String(color || "#6b7280").trim(),
+      icon: String(icon || ""),
+      repos: cleanedRepos,
+    };
+    room.teams.push(team);
+
+    await writeCompaniesFile(data);
+    res.status(201).json({ company, room, team });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a team from a room
+app.delete(
+  "/api/companies/:companyId/rooms/:roomId/teams/:teamId",
+  async (req, res) => {
+    try {
+      const { companyId, roomId, teamId } = req.params;
+      const data = await readCompaniesFile();
+      const company = (data.companies || []).find((c) => c.id === companyId);
+      if (!company) return res.status(404).json({ error: "company not found" });
+      const room = (company.rooms || []).find((r) => r.id === roomId);
+      if (!room) return res.status(404).json({ error: "room not found" });
+      const before = (room.teams || []).length;
+      room.teams = (room.teams || []).filter((t) => t.id !== teamId);
+      if (room.teams.length === before)
+        return res.status(404).json({ error: "team not found" });
+      await writeCompaniesFile(data);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// ─── room designer (AI-assisted room creation) ──────────────────────────────
+//
+// Decision 3A: tools allowlist is deny-by-default. Generated agents may only
+// hold SAFE_TOOLS unless the user explicitly toggled `tools_acknowledged` on
+// the agentDef (per-team opt-in for dangerous tools).
+const SAFE_TOOLS = new Set(["Read", "Grep", "Glob", "WebFetch", "WebSearch"]);
+
+function validateAgentDef(def, teamLabel) {
+  if (!def || typeof def !== "object")
+    return `${teamLabel}: agentDef must be an object`;
+  if (typeof def.systemPrompt !== "string" || !def.systemPrompt.trim())
+    return `${teamLabel}: agentDef.systemPrompt is required`;
+  if (def.model && typeof def.model !== "string")
+    return `${teamLabel}: agentDef.model must be a string`;
+  const tools = Array.isArray(def.tools) ? def.tools : [];
+  if (!def.tools_acknowledged) {
+    const offending = tools.filter((t) => !SAFE_TOOLS.has(t));
+    if (offending.length) {
+      return `${teamLabel}: dangerous tools require opt-in (tools_acknowledged): ${offending.join(", ")}`;
+    }
+  }
+  return null;
+}
+
+// Run the room-designer agent with a structured payload. Returns parsed JSON
+// from the agent's first {...} block. Throws on parse failure.
+async function runRoomDesigner(payload, { stream, res } = {}) {
+  const agentFile = await readFile(
+    path.join(WORKSPACE, ".claude/agents/room-designer.md"),
+    "utf8",
+  );
+  const systemPrompt = matter(agentFile).content.trim();
+  const userMessage = JSON.stringify(payload);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "claude",
+      ["--system-prompt", systemPrompt, "-p", userMessage],
+      { cwd: WORKSPACE, env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let full = "";
+    proc.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      full += text;
+      if (stream && res) res.write(JSON.stringify({ chunk: text }) + "\n");
+    });
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`Claude exited with code ${code}`));
+        return;
+      }
+      const match = full.match(/\{[\s\S]*\}/);
+      if (!match) {
+        reject(new Error("Could not find JSON in Claude response"));
+        return;
+      }
+      try {
+        resolve(JSON.parse(match[0]));
+      } catch (err) {
+        reject(new Error(`Invalid JSON from Claude: ${err.message}`));
+      }
+    });
+    proc.on("error", reject);
+  });
+}
+
+// Start: generate a draft room from a free-form description.
+// Streams NDJSON: { chunk: "..." } progress events, then { done: true, result }.
+app.post("/api/companies/:companyId/rooms/design/start", async (req, res) => {
+  const { companyId } = req.params;
+  const { description } = req.body || {};
+  if (!description?.trim())
+    return res.status(400).json({ error: "description required" });
+
+  let companyContext = "";
+  try {
+    const data = await readCompaniesFile();
+    const company = (data.companies || []).find((c) => c.id === companyId);
+    if (company) {
+      const roomNames = (company.rooms || []).map((r) => r.name).join(", ");
+      companyContext = `Company: ${company.name}. Existing rooms: ${roomNames || "none"}.`;
+    }
+  } catch {
+    // best-effort context — generation still works without it
+  }
+
+  res.setHeader("Content-Type", "application/x-ndjson");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("X-Accel-Buffering", "no");
+  const send = (obj) => res.write(JSON.stringify(obj) + "\n");
+
+  try {
+    const result = await runRoomDesigner(
+      { mode: "start", description: description.trim(), companyContext },
+      { stream: true, res },
+    );
+    send({ done: true, result });
+    res.end();
+  } catch (err) {
+    send({ error: err.message });
+    res.end();
+  }
+});
+
+// Regen-agent: regenerate a single team's agentDef given user instructions
+// and the rest of the current room as context.
+app.post(
+  "/api/companies/:companyId/rooms/design/regen-agent",
+  async (req, res) => {
+    try {
+      const { currentRoom, teamId, instructions = "" } = req.body || {};
+      if (!currentRoom || !teamId)
+        return res
+          .status(400)
+          .json({ error: "currentRoom and teamId required" });
+      const result = await runRoomDesigner({
+        mode: "regen-agent",
+        currentRoom,
+        teamId,
+        instructions,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Check-stale: after the user edits a team, find OTHER teams in the room
+// whose coverage may overlap or have gaps because of the edit. Powers the
+// "stale agents" banner (decision 2B).
+app.post(
+  "/api/companies/:companyId/rooms/design/check-stale",
+  async (req, res) => {
+    try {
+      const { currentRoom, editedTeamId, previousAgentDef } = req.body || {};
+      if (!currentRoom || !editedTeamId)
+        return res
+          .status(400)
+          .json({ error: "currentRoom and editedTeamId required" });
+      const result = await runRoomDesigner({
+        mode: "check-stale",
+        currentRoom,
+        editedTeamId,
+        previousAgentDef,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Finalize: atomically save a designer-built room with inline agentDef teams.
+// Validates each team's tools allowlist against SAFE_TOOLS (deny-by-default).
+app.post(
+  "/api/companies/:companyId/rooms/design/finalize",
+  async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { id: rawId, name, description = "", teams = [] } = req.body || {};
+      if (!name?.trim())
+        return res.status(400).json({ error: "name is required" });
+      if (!Array.isArray(teams) || teams.length === 0)
+        return res.status(400).json({ error: "at least one team is required" });
+
+      const roomId = slugifyCompanyId(rawId || name);
+      if (!roomId)
+        return res.status(400).json({ error: "could not derive id from name" });
+
+      // Validate each team — either a curated agent slug OR an inline agentDef.
+      const cleanedTeams = [];
+      const seenTeamIds = new Set();
+      for (const t of teams) {
+        if (!t?.name?.trim())
+          return res.status(400).json({ error: "team name required" });
+        const tid = slugifyCompanyId(t.id || t.name);
+        if (!tid)
+          return res
+            .status(400)
+            .json({ error: `could not derive id for team ${t.name}` });
+        if (seenTeamIds.has(tid))
+          return res.status(400).json({ error: `duplicate team id: ${tid}` });
+        seenTeamIds.add(tid);
+
+        const hasSlug = typeof t.agent === "string" && t.agent.trim();
+        const hasDef = t.agentDef && typeof t.agentDef === "object";
+        if (!hasSlug && !hasDef)
+          return res
+            .status(400)
+            .json({ error: `team ${t.name}: needs agent slug or agentDef` });
+
+        const team = {
+          id: tid,
+          name: t.name.trim(),
+          tagline: String(t.tagline || "").trim(),
+          color: String(t.color || "#6b7280").trim(),
+          icon: String(t.icon || ""),
+          repos: Array.isArray(t.repos) ? t.repos.filter(Boolean) : [],
+        };
+        if (hasSlug) team.agent = t.agent.trim();
+        if (hasDef) {
+          const err = validateAgentDef(t.agentDef, `team ${t.name}`);
+          if (err) return res.status(400).json({ error: err });
+          team.agentDef = {
+            model: t.agentDef.model || "sonnet",
+            tools: Array.isArray(t.agentDef.tools) ? t.agentDef.tools : [],
+            description: String(t.agentDef.description || "").trim(),
+            systemPrompt: String(t.agentDef.systemPrompt).trim(),
+          };
+          if (t.agentDef.tools_acknowledged)
+            team.agentDef.tools_acknowledged = true;
+        }
+        cleanedTeams.push(team);
+      }
+
+      const data = await readCompaniesFile();
+      const company = (data.companies || []).find((c) => c.id === companyId);
+      if (!company) return res.status(404).json({ error: "company not found" });
+      company.rooms = company.rooms || [];
+      if (company.rooms.some((r) => r.id === roomId))
+        return res
+          .status(409)
+          .json({ error: `room '${roomId}' already exists` });
+
+      const room = {
+        id: roomId,
+        name: name.trim(),
+        description: String(description || "").trim(),
+        kind: "engineer", // legacy field; teams[] is the real shape
+        layout: "teams",
+        teams: cleanedTeams,
+      };
+      company.rooms.push(room);
+      await writeCompaniesFile(data);
+      res.status(201).json({ company, room });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Add a new room to a company
+app.post("/api/companies/:companyId/rooms", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const {
+      id: rawId,
+      name,
+      description = "",
+      kind = "engineer",
+      route,
+    } = req.body || {};
+
+    if (!name?.trim())
+      return res.status(400).json({ error: "name is required" });
+    if (!["engineer", "trading"].includes(kind))
+      return res
+        .status(400)
+        .json({ error: "kind must be 'engineer' or 'trading'" });
+
+    const id = slugifyCompanyId(rawId || name);
+    if (!id)
+      return res.status(400).json({ error: "could not derive id from name" });
+
+    const data = await readCompaniesFile();
+    const company = (data.companies || []).find((c) => c.id === companyId);
+    if (!company) return res.status(404).json({ error: "company not found" });
+
+    company.rooms = company.rooms || [];
+    if (company.rooms.some((r) => r.id === id))
+      return res
+        .status(409)
+        .json({ error: `room '${id}' already exists in this company` });
+
+    let room;
+    if (kind === "trading") {
+      room = {
+        id,
+        name: name.trim(),
+        description: String(description || "").trim(),
+        kind: "trading",
+        route: String(route || "/trading").trim() || "/trading",
+      };
+    } else {
+      room = {
+        id,
+        name: name.trim(),
+        description:
+          String(description || "").trim() ||
+          "Cross-functional engineering — FE, BE, DevOps, Solution Architect",
+        kind: "engineer",
+        teams: [],
+      };
+    }
+
+    company.rooms.push(room);
+    await writeCompaniesFile(data);
+    res.status(201).json({ company, room });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a room from a company
+app.delete("/api/companies/:companyId/rooms/:roomId", async (req, res) => {
+  try {
+    const { companyId, roomId } = req.params;
+    const data = await readCompaniesFile();
+    const company = (data.companies || []).find((c) => c.id === companyId);
+    if (!company) return res.status(404).json({ error: "company not found" });
+    const before = (company.rooms || []).length;
+    company.rooms = (company.rooms || []).filter((r) => r.id !== roomId);
+    if (company.rooms.length === before)
+      return res.status(404).json({ error: "room not found" });
+    await writeCompaniesFile(data);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3547,16 +3975,24 @@ wss.on("connection", (ws, req) => {
 
       // Investigations and other dedicated-agent chats route every turn through
       // the chosen sub-agent so the conversation stays focused on its persona.
+      // Resolution order: curated slug in .claude/agents/ first, then inline
+      // agentDef on the team (designer-generated rooms).
       let agentEffort = null;
       if (chat.agent && /^[\w-]+$/.test(chat.agent)) {
         args.push("--agent", chat.agent);
-        // Pull `effort` from the agent's frontmatter if defined.
         try {
           const agentFile = path.join(agentsDir(), `${chat.agent}.md`);
           if (existsSync(agentFile)) {
             const raw = await readFile(agentFile, "utf8");
             const fm = matter(raw).data || {};
             if (fm.effort) agentEffort = fm.effort;
+          }
+        } catch {}
+      } else if (chat.kind === "team" && chat.companyId && chat.teamId) {
+        try {
+          const found = await findTeam(chat.companyId, chat.teamId);
+          if (found?.team?.agentDef?.systemPrompt) {
+            args.push("--system-prompt", found.team.agentDef.systemPrompt);
           }
         } catch {}
       }
@@ -4082,7 +4518,7 @@ setInterval(queueTick, 5000);
 const PORT = process.env.PORT || 3001;
 migrateProjectMcpFiles().catch(() => {});
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`ZIO Platform UI → http://localhost:${PORT}`);
+  console.log(`URI Platform UI → http://localhost:${PORT}`);
   console.log(`Workspace: ${WORKSPACE}`);
   console.log(`Queue cron: polling every 5s`);
 });

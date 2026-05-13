@@ -16,6 +16,7 @@ import Trading from "./pages/Trading";
 import Settings from "./pages/Settings";
 import Home from "./pages/Home";
 import Company from "./pages/Company";
+import RoomDesigner from "./pages/RoomDesigner";
 import TeamChat from "./pages/TeamChat";
 import Onboarding from "./components/Onboarding";
 import { useTheme } from "./hooks/useTheme";
@@ -33,7 +34,7 @@ export default function App() {
         closeButton
         offset={0}
         toastOptions={{
-          className: "zio-toast",
+          className: "URI-toast",
           style: {
             fontFamily: '"Figtree", system-ui, sans-serif',
           },
@@ -45,6 +46,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/co/:companyId" element={<Company />} />
+          <Route path="/co/:companyId/rooms/new" element={<RoomDesigner />} />
           <Route path="/co/:companyId/team/:teamId" element={<TeamChat />} />
           <Route path="/co/:companyId/tasks" element={<Tasks />} />
           <Route path="/co/:companyId/queue" element={<Queue />} />
