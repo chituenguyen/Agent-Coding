@@ -48,6 +48,10 @@ export default function App() {
           <Route path="/co/:companyId" element={<Company />} />
           <Route path="/co/:companyId/rooms/new" element={<RoomDesigner />} />
           <Route path="/co/:companyId/team/:teamId" element={<TeamChat />} />
+          <Route
+            path="/co/:companyId/team/:teamId/t/:threadId"
+            element={<TeamChat />}
+          />
           <Route path="/co/:companyId/tasks" element={<Tasks />} />
           <Route path="/co/:companyId/queue" element={<Queue />} />
           <Route path="/co/:companyId/investigate" element={<Investigate />} />

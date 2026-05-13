@@ -4,6 +4,7 @@ import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
 import LiveFilePanel from "../components/LiveFilePanel";
+import ThreadSidebar from "../components/teamchat/ThreadSidebar";
 
 const FILE_EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit"]);
 
@@ -29,11 +30,12 @@ function friendlyToolLabel(name, input = {}) {
 }
 
 export default function TeamChat() {
-  const { companyId, teamId } = useParams();
+  const { companyId, teamId, threadId } = useParams();
   const navigate = useNavigate();
   const [team, setTeam] = useState(null);
   const [company, setCompany] = useState(null);
   const [chat, setChat] = useState(null);
+  const [threads, setThreads] = useState([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
@@ -45,7 +47,37 @@ export default function TeamChat() {
   const bottomRef = useRef(null);
   const messagesRef = useRef(null);
 
-  // Bootstrap: load team meta, then create or restore a chat for this team.
+  // Hydrate panel state from chat's file edits
+  function hydratePanels(activeChat) {
+    const tools = (activeChat.messages || []).flatMap(
+      (m) => m.toolEvents || [],
+    );
+    const edits = tools.filter((e) => FILE_EDIT_TOOLS.has(e.name));
+    setFileEdits(edits);
+  }
+
+  // Patch thread in list when it gets auto-titled or updated
+  function patchThreadFromChat(c) {
+    setThreads((prev) => {
+      const without = prev.filter((t) => t.id !== c.id);
+      return [
+        {
+          id: c.id,
+          title: c.title,
+          updatedAt: c.updatedAt,
+          messageCount: (c.messages || []).length,
+          kind: c.kind,
+          agent: c.agent,
+          companyId: c.companyId,
+          teamId: c.teamId,
+        },
+        ...without,
+      ];
+    });
+  }
+
+  // Bootstrap: load team meta, then load threads. If threadId present, load that chat.
+  // If not, pick newest or create.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -57,21 +89,40 @@ export default function TeamChat() {
           .flatMap((r) => r.teams || [])
           .find((tm) => tm.id === teamId);
         setTeam(t || null);
-        // Find existing team chat for this team, else create
-        const allChats = await api.getChats("team");
-        const found = allChats.find(
-          (c) => c.companyId === companyId && c.teamId === teamId,
-        );
-        let active = found
-          ? await api.getChat(found.id)
-          : await api.createChat({ kind: "team", companyId, teamId });
-        setChat(active);
-        // Hydrate panel state
-        const tools = (active.messages || []).flatMap(
-          (m) => m.toolEvents || [],
-        );
-        const edits = tools.filter((e) => FILE_EDIT_TOOLS.has(e.name));
-        setFileEdits(edits);
+
+        // Get all threads for this team
+        const list = await api.getChats("team", companyId, teamId);
+        if (cancelled) return;
+        setThreads(list);
+
+        if (threadId) {
+          // Explicit thread requested
+          const active = await api.getChat(threadId);
+          if (!active) {
+            // 404 — thread was deleted / bad URL. Fall back to newest or create.
+            const fallback = list[0]
+              ? await api.getChat(list[0].id)
+              : await api.createChat({ kind: "team", companyId, teamId });
+            navigate(`/co/${companyId}/team/${teamId}/t/${fallback.id}`, {
+              replace: true,
+            });
+            return;
+          }
+          if (cancelled) return;
+          setChat(active);
+          hydratePanels(active);
+        } else {
+          // No threadId in URL: pick newest, else create. ALWAYS navigate so the
+          // URL becomes canonical (deep-linkable, browser-back-friendly).
+          const target = list[0]
+            ? await api.getChat(list[0].id)
+            : await api.createChat({ kind: "team", companyId, teamId });
+          // Refresh list if we just created one
+          if (!list[0]) setThreads([target, ...list]);
+          navigate(`/co/${companyId}/team/${teamId}/t/${target.id}`, {
+            replace: true,
+          });
+        }
       } catch (e) {
         console.error(e);
       }
@@ -79,7 +130,7 @@ export default function TeamChat() {
     return () => {
       cancelled = true;
     };
-  }, [companyId, teamId]);
+  }, [companyId, teamId, threadId]);
 
   // Track pinned-to-bottom
   useEffect(() => {
@@ -107,6 +158,7 @@ export default function TeamChat() {
       const msg = JSON.parse(e.data);
       if (msg.type === "chat-user-saved") {
         setChat(msg.chat);
+        patchThreadFromChat(msg.chat);
       } else if (msg.type === "chat-resume") {
         setStreaming(true);
         setStreamText(msg.assistantText || "");
@@ -139,6 +191,7 @@ export default function TeamChat() {
         setStreamText("");
         setToolEvents([]);
         setChat(msg.chat);
+        patchThreadFromChat(msg.chat);
       } else if (msg.type === "chat-stopped") {
         setStreaming(false);
       } else if (msg.type === "chat-error") {
@@ -229,8 +282,49 @@ export default function TeamChat() {
     }
   }
 
+  async function handleCreateThread() {
+    const created = await api.createChat({ kind: "team", companyId, teamId });
+    setThreads((prev) => [
+      {
+        id: created.id,
+        title: created.title,
+        updatedAt: created.updatedAt,
+        messageCount: 0,
+        kind: "team",
+        agent: created.agent,
+        companyId,
+        teamId,
+      },
+      ...prev,
+    ]);
+    navigate(`/co/${companyId}/team/${teamId}/t/${created.id}`);
+  }
+
+  async function handleDeleteThread(id) {
+    await api.deleteChat(id);
+    const remaining = threads.filter((t) => t.id !== id);
+    setThreads(remaining);
+    if (id !== threadId) return; // deleted a non-active thread, just stay
+    if (remaining[0]) {
+      navigate(`/co/${companyId}/team/${teamId}/t/${remaining[0].id}`, {
+        replace: true,
+      });
+    } else {
+      // No threads left — bootstrap will create a fresh one
+      navigate(`/co/${companyId}/team/${teamId}`, { replace: true });
+    }
+  }
+
   return (
     <div className="cofounder-skin flex h-full bg-co-bg text-co-fg">
+      <ThreadSidebar
+        threads={threads}
+        activeThreadId={chat?.id || null}
+        team={team}
+        onSelect={(id) => navigate(`/co/${companyId}/team/${teamId}/t/${id}`)}
+        onCreate={handleCreateThread}
+        onDelete={handleDeleteThread}
+      />
       <main className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
         <header className="flex items-center gap-3 border-b border-co-fg/10 bg-co-surface px-5 py-3">
