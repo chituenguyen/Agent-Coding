@@ -2494,7 +2494,27 @@ app.delete("/api/commands/:filename", async (req, res) => {
 
 // ─── native folder picker (macOS osascript) ─────────────────────────────────
 
+function isRemoteRequest(req) {
+  const clientIp = req.ip || req.socket.remoteAddress;
+  const isLocal = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(clientIp);
+  if (isLocal) return false;
+  // Already past the auth gate (server.js:58–94), so cookie matches if we got here.
+  // But double-check defensively:
+  const cookies = parseCookies(req.headers.cookie);
+  return !!(
+    remoteSession.active &&
+    remoteSession.sessionId &&
+    cookies.remote_sid === remoteSession.sessionId
+  );
+}
+
 app.post("/api/browse-folder", async (req, res) => {
+  // Remote devices cannot trigger an osascript dialog on the host Mac.
+  // Tell the client to open its in-app path modal instead.
+  if (isRemoteRequest(req)) {
+    return res.json({ remote: true });
+  }
+
   const { prompt: dialogPrompt = "Select repository folder" } = req.body || {};
   const escaped = dialogPrompt.replace(/'/g, "\\'");
   const proc = spawn(
@@ -2515,6 +2535,73 @@ app.post("/api/browse-folder", async (req, res) => {
     res.json({ path: out.trim().replace(/\/$/, "") }); // strip trailing slash
   });
   proc.on("error", (e) => res.status(500).json({ error: e.message }));
+});
+
+app.post("/api/fs/validate-path", async (req, res) => {
+  try {
+    const raw = (req.body?.path || "").trim();
+    if (!raw)
+      return res.status(400).json({ ok: false, error: "path required" });
+
+    // Tilde expansion — phone users will type ~/Desktop/foo
+    const expanded = raw.startsWith("~")
+      ? path.join(process.env.HOME || "", raw.slice(1))
+      : raw;
+
+    // Must be absolute after expansion
+    if (!path.isAbsolute(expanded)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "path must be absolute" });
+    }
+
+    const resolved = path.resolve(expanded);
+
+    // Existence + directory check (also catches non-existent paths)
+    const s = await stat(resolved);
+    if (!s.isDirectory()) {
+      return res.status(400).json({ ok: false, error: "not a directory" });
+    }
+
+    res.json({ ok: true, path: resolved });
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return res.status(400).json({ ok: false, error: "path does not exist" });
+    }
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/fs/recent-paths", async (req, res) => {
+  try {
+    const home = process.env.HOME || "";
+    const recents = [];
+
+    // Repos registered in mcp-server.json
+    const repos = await getRepos();
+    for (const r of repos) {
+      if (r.path) recents.push({ path: r.path, label: r.name });
+    }
+
+    // Always-on suggestions
+    if (home) recents.push({ path: home, label: "Home" });
+    const desktop = path.join(home, "Desktop");
+    if (existsSync(desktop)) recents.push({ path: desktop, label: "Desktop" });
+
+    // Dedupe by path, preserve first-seen order, cap at 10
+    const seen = new Set();
+    const deduped = [];
+    for (const r of recents) {
+      if (seen.has(r.path)) continue;
+      seen.add(r.path);
+      deduped.push(r);
+      if (deduped.length >= 10) break;
+    }
+
+    res.json({ paths: deduped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── prompt enhancer agent ──────────────────────────────────────────────────
@@ -2756,6 +2843,7 @@ app.get("/api/remote/status", (req, res) => {
     paired: !!remoteSession.sessionId,
     pairedAt: remoteSession.pairedAt,
     tunnelUrl: remoteSession.tunnelUrl,
+    isCurrentDeviceRemote: isRemoteRequest(req),
     // Include QR so it survives page refresh
     ...(remoteSession.active && !remoteSession.sessionId
       ? { qrDataUrl: remoteSession.qrDataUrl, url: remoteSession.pairUrl }
