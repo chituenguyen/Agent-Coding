@@ -132,6 +132,10 @@ export const api = {
   // Native folder picker
   browseFolder: (prompt) => req("POST", "/browse-folder", { prompt }),
 
+  // Folder picker — remote fallback
+  validatePath: (p) => req("POST", "/fs/validate-path", { path: p }),
+  getRecentPaths: () => req("GET", "/fs/recent-paths"),
+
   // Remote control
   getRemoteStatus: () => req("GET", "/remote/status"),
   enableRemote: () => req("POST", "/remote/enable"),

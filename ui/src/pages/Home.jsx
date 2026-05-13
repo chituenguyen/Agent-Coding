@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import RemotePathModal from "../components/RemotePathModal";
+import { pickFolder as pickFolder_ } from "../lib/folderPicker";
 
 function CompanyLogo({ company, size = 56 }) {
   if (company.logo) {
@@ -203,15 +205,17 @@ function WorkspaceModal({ mode, initial, onClose, onSaved }) {
   const [initFolder, setInitFolder] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [showRemoteModal, setShowRemoteModal] = useState(false);
   const fileRef = useRef(null);
 
   async function pickFolder() {
-    try {
-      const res = await api.browseFolder("Select workspace folder");
-      if (res.path) setRepoPath(res.path);
-    } catch {
-      // cancelled
+    const res = await pickFolder_("Select workspace folder");
+    if (!res) return;
+    if (res.remote) {
+      setShowRemoteModal(true);
+      return;
     }
+    setRepoPath(res.path);
   }
 
   const [dragging, setDragging] = useState(false);
@@ -264,7 +268,8 @@ function WorkspaceModal({ mode, initial, onClose, onSaved }) {
         };
         // Only send logo if it changed
         if (logoDataUrl) patch.logo = logoPayload;
-        else if (logoUrl !== (initial?.logo || "")) patch.logo = logoUrl || null;
+        else if (logoUrl !== (initial?.logo || ""))
+          patch.logo = logoUrl || null;
         await api.updateCompany(initial.id, patch);
       } else {
         await api.createCompany({
@@ -343,9 +348,7 @@ function WorkspaceModal({ mode, initial, onClose, onSaved }) {
                 onDrop={onLogoDrop}
                 title="Click or drop image to upload"
                 className={`group/logo relative flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-co-lg transition-all ${
-                  dragging
-                    ? "ring-2 ring-offset-2 ring-offset-co-surface"
-                    : ""
+                  dragging ? "ring-2 ring-offset-2 ring-offset-co-surface" : ""
                 }`}
                 style={{
                   background: previewSrc
@@ -542,6 +545,18 @@ function WorkspaceModal({ mode, initial, onClose, onSaved }) {
           </button>
         </div>
       </form>
+
+      {showRemoteModal && (
+        <RemotePathModal
+          prompt="Select workspace folder"
+          initial={repoPath}
+          onCancel={() => setShowRemoteModal(false)}
+          onConfirm={(p) => {
+            setShowRemoteModal(false);
+            setRepoPath(p);
+          }}
+        />
+      )}
     </div>
   );
 }

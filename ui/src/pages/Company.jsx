@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import TeamIcon from "../components/TeamIcon";
+import RemotePathModal from "../components/RemotePathModal";
+import { pickFolder as pickFolder_ } from "../lib/folderPicker";
 
 const PRESET_COLORS = [
   "#3b82f6",
@@ -373,17 +375,21 @@ function ReposModal({ companyId, team, onClose, onSaved }) {
   const [repos, setRepos] = useState(team.repos || []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [showRemoteModal, setShowRemoteModal] = useState(false);
+
+  function applyRepo(p) {
+    if (repos.includes(p)) return;
+    setRepos((r) => [...r, p]);
+  }
 
   async function pickFolder() {
-    try {
-      const res = await api.browseFolder(`Pick source folder for ${team.name}`);
-      if (res.path) {
-        if (repos.includes(res.path)) return;
-        setRepos((r) => [...r, res.path]);
-      }
-    } catch {
-      // cancelled
+    const res = await pickFolder_(`Pick source folder for ${team.name}`);
+    if (!res) return;
+    if (res.remote) {
+      setShowRemoteModal(true);
+      return;
     }
+    applyRepo(res.path);
   }
 
   function remove(idx) {
@@ -554,6 +560,18 @@ function ReposModal({ companyId, team, onClose, onSaved }) {
           </button>
         </div>
       </div>
+
+      {showRemoteModal && (
+        <RemotePathModal
+          prompt={`Pick source folder for ${team.name}`}
+          initial=""
+          onCancel={() => setShowRemoteModal(false)}
+          onConfirm={(p) => {
+            setShowRemoteModal(false);
+            applyRepo(p);
+          }}
+        />
+      )}
     </div>
   );
 }
