@@ -1,8 +1,8 @@
-# CLAUDE.md — ZIO Platform Workspace
+# CLAUDE.md — URI Platform Workspace
 
 ## What This Is
 
-This is an **ZIO Platform Workspace** — an automated multi-agent system where each agent has its own "soul", orchestrated by the main session, working until the task is complete.
+This is an **URI Platform Workspace** — an automated multi-agent system where each agent has its own "soul", orchestrated by the main session, working until the task is complete.
 
 **This file is the source of truth** — loaded at the start of every session.
 

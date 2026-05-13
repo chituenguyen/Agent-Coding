@@ -96,7 +96,7 @@ const IconLogoMark = () => (
     strokeLinecap="round"
     strokeLinejoin="round"
   >
-    {/* Two stacked Z-shaped strokes — distinctive ZIO mark */}
+    {/* Two stacked Z-shaped strokes — distinctive URI mark */}
     <path d="M5 5h10l-7 7h10" />
     <path d="M5 16h10l-7 4" opacity="0.7" />
   </svg>
@@ -116,13 +116,13 @@ const configure = [
   { to: "/usage", label: "Usage", icon: IconUsage },
 ];
 
-const STORAGE_KEY = "zio:workspace-name";
+const STORAGE_KEY = "URI:workspace-name";
 
 function loadWorkspaceName() {
   try {
-    return localStorage.getItem(STORAGE_KEY) || "ZIO Platform";
+    return localStorage.getItem(STORAGE_KEY) || "URI Platform";
   } catch {
-    return "ZIO Platform";
+    return "URI Platform";
   }
 }
 
@@ -136,7 +136,7 @@ function saveWorkspaceName(name) {
 
 // ─── nav item ───────────────────────────────────────────────────────────────
 
-const COLLAPSED_KEY = "zio:sidebar-collapsed";
+const COLLAPSED_KEY = "URI:sidebar-collapsed";
 
 function loadCollapsed() {
   try {
@@ -220,7 +220,7 @@ function WorkspaceHeader({ onClose, collapsed, onToggleCollapse }) {
   }, [editing, name]);
 
   function commit() {
-    const v = draft.trim() || "ZIO Platform";
+    const v = draft.trim() || "URI Platform";
     setName(v);
     saveWorkspaceName(v);
     setEditing(false);

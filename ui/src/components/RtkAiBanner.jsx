@@ -3,17 +3,17 @@
 // clicks "Auto config", the banner saves a flag in localStorage and disappears.
 //
 // localStorage keys:
-//   - zio:rtkai-status     →  "configured" | "skipped"
-//   - zio:rtkai-config     →  { mode, configuredAt, ... }
+//   - URI:rtkai-status     →  "configured" | "skipped"
+//   - URI:rtkai-config     →  { mode, configuredAt, ... }
 //
 // To re-trigger the banner, run in DevTools:
-//   localStorage.removeItem("zio:rtkai-status")
+//   localStorage.removeItem("URI:rtkai-status")
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-const STATUS_KEY = "zio:rtkai-status";
-const CONFIG_KEY = "zio:rtkai-config";
+const STATUS_KEY = "URI:rtkai-status";
+const CONFIG_KEY = "URI:rtkai-config";
 
 function loadStatus() {
   try {
