@@ -9,3 +9,4 @@ usage.jsonl
 attachments/
 .claude/hooks/notifications.log
 .workspace-name
+.cache/

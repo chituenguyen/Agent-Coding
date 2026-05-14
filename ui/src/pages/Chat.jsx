@@ -3,6 +3,7 @@ import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
 import LiveFilePanel from "../components/LiveFilePanel";
+import RecallPanel from "../components/RecallPanel";
 import { toast } from "sonner";
 import { dialog } from "../components/Dialog";
 
@@ -72,11 +73,29 @@ function MentionRow({ item, selected, onPick, onHover, scrollRef }) {
         }}
       >
         {isFolder ? (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
           </svg>
         ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <rect x="3" y="6" width="18" height="12" rx="2" />
             <circle cx="9" cy="12" r="1" fill="currentColor" />
             <circle cx="15" cy="12" r="1" fill="currentColor" />
@@ -184,13 +203,33 @@ function MessageBlock({ msg }) {
                 title={a.path}
               >
                 {a.contentType?.startsWith("image/") ? (
-                  <svg className="inline -mt-0.5" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    className="inline -mt-0.5"
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="3" y="3" width="18" height="18" rx="2" />
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <path d="M21 15l-5-5L5 21" />
                   </svg>
                 ) : (
-                  <svg className="inline -mt-0.5" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    className="inline -mt-0.5"
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                   </svg>
                 )}{" "}
@@ -304,6 +343,8 @@ export default function Chat() {
   const [toolEvents, setToolEvents] = useState([]);
   const [mentionQuery, setMentionQuery] = useState(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [recallQuery, setRecallQuery] = useState(null);
+  const [recallFile, setRecallFile] = useState(null);
   const [attachments, setAttachments] = useState([]); // [{path, filename, size, contentType, uploading}]
   const [dragActive, setDragActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -375,7 +416,14 @@ export default function Chat() {
 
   async function deleteChat(id, e) {
     e.stopPropagation();
-    if (!(await dialog.confirm({ message: "Delete this chat?", tone: "danger", confirmLabel: "Delete" }))) return;
+    if (
+      !(await dialog.confirm({
+        message: "Delete this chat?",
+        tone: "danger",
+        confirmLabel: "Delete",
+      }))
+    )
+      return;
     await api.deleteChat(id);
     setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -549,6 +597,13 @@ export default function Chat() {
     if ((!input.trim() && attachments.length === 0) || streaming || !activeId)
       return;
     if (attachments.some((a) => a.uploading)) return;
+
+    // Don't submit /recall commands, just keep panel visible
+    if (input.match(/^\/recall\s+/)) {
+      setInput("");
+      return;
+    }
+
     const ws = connect();
     const message =
       input.trim() ||
@@ -690,8 +745,36 @@ export default function Chat() {
     setInput(v);
     const cursor = e.target.selectionStart;
     const before = v.slice(0, cursor);
-    const m = before.match(/@([\w-]*)$/);
-    setMentionQuery(m ? m[1] : null);
+
+    // Check for /recall command
+    const recallMatch = v.match(/^\/recall\s+(.+)$/);
+    if (recallMatch) {
+      setRecallQuery(recallMatch[1]);
+      setMentionQuery(null);
+      setRecallFile(null);
+    } else {
+      setRecallQuery(null);
+
+      // Check for @mention
+      const m = before.match(/@([\w-]*)$/);
+      if (m) {
+        setMentionQuery(m[1]);
+        // Try to resolve file path for auto-mode recall
+        const query = m[1];
+        if (query && query.includes(".")) {
+          // Looks like a file mention
+          const file = repos
+            .flatMap((r) => r.files || [])
+            .find((f) => f.path.endsWith("/" + query) || f.filename === query);
+          setRecallFile(file ? file.path : null);
+        } else {
+          setRecallFile(null);
+        }
+      } else {
+        setMentionQuery(null);
+        setRecallFile(null);
+      }
+    }
   }
 
   function pickMentionItem(item) {
@@ -828,7 +911,9 @@ export default function Chat() {
                 No threads yet
               </p>
               <p className="relative mt-0.5 text-[10px] text-co-fg/40">
-                Click <span className="font-semibold text-co-fg/60">New chat</span> to start
+                Click{" "}
+                <span className="font-semibold text-co-fg/60">New chat</span> to
+                start
               </p>
             </div>
           )}
@@ -939,15 +1024,42 @@ export default function Chat() {
                 boxShadow: "inset 0 0 0 1px rgb(var(--co-fg-rgb) / 0.08)",
               }}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 {/* Head */}
                 <rect x="5" y="8" width="14" height="10" rx="3" />
                 {/* Antenna */}
                 <path d="M12 5v3" />
-                <circle cx="12" cy="4" r="0.9" fill="currentColor" stroke="none" />
+                <circle
+                  cx="12"
+                  cy="4"
+                  r="0.9"
+                  fill="currentColor"
+                  stroke="none"
+                />
                 {/* Eyes */}
-                <circle cx="9.2" cy="13" r="0.9" fill="currentColor" stroke="none" />
-                <circle cx="14.8" cy="13" r="0.9" fill="currentColor" stroke="none" />
+                <circle
+                  cx="9.2"
+                  cy="13"
+                  r="0.9"
+                  fill="currentColor"
+                  stroke="none"
+                />
+                <circle
+                  cx="14.8"
+                  cy="13"
+                  r="0.9"
+                  fill="currentColor"
+                  stroke="none"
+                />
                 {/* Side ears */}
                 <path d="M3.5 12v2M20.5 12v2" opacity="0.55" />
               </svg>
@@ -962,7 +1074,9 @@ export default function Chat() {
                 boxShadow: streaming
                   ? "0 0 6px rgb(var(--co-accent-rgb) / 0.8)"
                   : "0 0 4px rgb(var(--co-success-rgb) / 0.7)",
-                animation: streaming ? "pulse 1.2s ease-in-out infinite" : "none",
+                animation: streaming
+                  ? "pulse 1.2s ease-in-out infinite"
+                  : "none",
               }}
             />
           </div>
@@ -1045,7 +1159,16 @@ export default function Chat() {
                   : "border-co-fg/15 text-co-fg/60 hover:border-co-fg/30 hover:text-co-fg"
               }`}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                 <polyline points="14 2 14 8 20 8" />
               </svg>
@@ -1068,7 +1191,16 @@ export default function Chat() {
                   : "border-co-fg/15 text-co-fg/60 hover:border-co-fg/30 hover:text-co-fg"
               }`}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M9 11l3 3L22 4" />
                 <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
               </svg>
@@ -1109,7 +1241,17 @@ export default function Chat() {
                 className="inline-flex items-center gap-1.5 px-2 py-1 bg-co-fg/[0.08] text-co-fg text-xs rounded-md font-mono"
                 title={f.path}
               >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="text-co-fg/55">
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-co-fg/55"
+                >
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
                 </svg>
                 {f.name}
@@ -1292,6 +1434,14 @@ export default function Chat() {
                 onHover={setMentionIndex}
               />
             )}
+            {recallQuery || (mentionQuery && recallFile) ? (
+              <RecallPanel
+                query={recallQuery || mentionQuery}
+                file={recallFile}
+                project={activeChat?.companyId}
+                mode={recallQuery ? "command" : "auto"}
+              />
+            ) : null}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {attachments.map((a) => (
@@ -1305,13 +1455,31 @@ export default function Chat() {
                   >
                     <span className="text-co-fg/55">
                       {a.contentType?.startsWith("image/") ? (
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                        <svg
+                          width="11"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
                           <rect x="3" y="3" width="18" height="18" rx="2" />
                           <circle cx="8.5" cy="8.5" r="1.5" />
                           <path d="M21 15l-5-5L5 21" />
                         </svg>
                       ) : (
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                        <svg
+                          width="11"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
                           <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                         </svg>
                       )}
@@ -1373,9 +1541,7 @@ export default function Chat() {
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
                 placeholder={
-                  activeId
-                    ? "Ask URI about your code…"
-                    : "Create a chat first"
+                  activeId ? "Ask URI about your code…" : "Create a chat first"
                 }
                 disabled={!activeId || streaming}
                 rows={1}
@@ -1397,12 +1563,31 @@ export default function Chat() {
                   className="inline-flex items-center gap-1.5 rounded-full border border-co-fg/15 px-3 py-1.5 text-xs font-medium text-co-fg/75 transition-colors hover:border-co-fg/30 hover:bg-co-fg/[0.04] hover:text-co-fg"
                   title="Change model"
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <circle cx="12" cy="12" r="10" />
                     <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
                   </svg>
                   {MODELS.find((m) => m.id === currentModel)?.label || "Auto"}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="text-co-fg/45">
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-co-fg/45"
+                  >
                     <polyline points="6 9 12 15 18 9" />
                   </svg>
                 </button>
@@ -1421,7 +1606,16 @@ export default function Chat() {
                       e.target.value = "";
                     }}
                   />
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M12 5v14M5 12h14" />
                   </svg>
                 </label>
@@ -1435,7 +1629,16 @@ export default function Chat() {
                   disabled
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-co-fg/35 transition-colors hover:bg-co-fg/[0.04] disabled:cursor-not-allowed"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="9" y="2" width="6" height="12" rx="3" />
                     <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" />
                   </svg>
@@ -1448,7 +1651,12 @@ export default function Chat() {
                     title="Stop"
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-co-destructive text-white transition-opacity hover:opacity-90"
                   >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
                       <rect x="6" y="6" width="12" height="12" rx="1.5" />
                     </svg>
                   </button>
@@ -1463,7 +1671,16 @@ export default function Chat() {
                     title="Send (Enter)"
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-co-primary text-co-primary-fg transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:bg-co-fg/15 disabled:text-co-fg/40"
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M12 19V5M5 12l7-7 7 7" />
                     </svg>
                   </button>
@@ -1493,7 +1710,16 @@ export default function Chat() {
                       >
                         {m.label}
                         {currentModel === m.id && (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
                             <polyline points="20 6 9 17 4 12" />
                           </svg>
                         )}
@@ -1511,7 +1737,16 @@ export default function Chat() {
                 className="inline-flex items-center gap-1.5 text-[11px] text-co-fg/50 transition-colors hover:text-co-fg/80"
                 title="Type @ to add a folder to this chat"
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
                 </svg>
                 {folderPills.length === 0
@@ -1521,9 +1756,13 @@ export default function Chat() {
                     : `${folderPills.length} folders scoped`}
               </button>
               <p className="text-[10px] text-co-fg/35">
-                <kbd className="rounded bg-co-fg/[0.05] px-1 py-0.5 font-mono text-[9px] text-co-fg/55">@</kbd>{" "}
+                <kbd className="rounded bg-co-fg/[0.05] px-1 py-0.5 font-mono text-[9px] text-co-fg/55">
+                  @
+                </kbd>{" "}
                 mention ·{" "}
-                <kbd className="rounded bg-co-fg/[0.05] px-1 py-0.5 font-mono text-[9px] text-co-fg/55">⏎</kbd>{" "}
+                <kbd className="rounded bg-co-fg/[0.05] px-1 py-0.5 font-mono text-[9px] text-co-fg/55">
+                  ⏎
+                </kbd>{" "}
                 send
               </p>
             </div>

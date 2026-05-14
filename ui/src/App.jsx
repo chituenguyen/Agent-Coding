@@ -12,6 +12,7 @@ import Agents from "./pages/Agents";
 import Commands from "./pages/Commands";
 import Mcp from "./pages/Mcp";
 import Usage from "./pages/Usage";
+import Monitor from "./pages/Monitor";
 import Trading from "./pages/Trading";
 import Settings from "./pages/Settings";
 import Home from "./pages/Home";
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/commands" element={<Commands />} />
           <Route path="/mcp" element={<Mcp />} />
+          <Route path="/monitor" element={<Monitor />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/trading" element={<Trading />} />
           <Route path="/settings" element={<Settings />} />

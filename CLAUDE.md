@@ -65,6 +65,7 @@ ORCHESTRATOR (Main Session)
 | **Reviewer**       | "Code quality is non-negotiable"                         | sonnet | Review code, approve or reject                   |
 | **Debugger**       | "Bugs fear me"                                           | sonnet | Fix issues found by Reviewer                     |
 | **Investigator**   | "Every bug has a birth certificate — I find it"          | sonnet | Interactive root cause investigation (on-demand) |
+| **Documenter**     | "Clarity comes from showing, not just telling"           | sonnet | Write docs + Mermaid diagrams from SPEC/code     |
 | **Learner**        | "Every task is a lesson"                                 | haiku  | Extract learnings, update context.md             |
 
 Model is set via `model` parameter on `Agent()` — overrides agent definition frontmatter. Learner uses haiku (lightweight task). All others use sonnet. Orchestrator can override per-task if needed (e.g. `model="opus"` for complex architecture).

@@ -4,6 +4,7 @@ import { api } from "../api";
 import MarkdownContent from "../components/MarkdownContent";
 import FileEditCard from "../components/FileEditCard";
 import LiveFilePanel from "../components/LiveFilePanel";
+import RecallPanel from "../components/RecallPanel";
 import { toast } from "sonner";
 import { dialog } from "../components/Dialog";
 
@@ -466,6 +467,8 @@ export default function Investigate() {
   const [toolEvents, setToolEvents] = useState([]);
   const [mentionQuery, setMentionQuery] = useState(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [recallQuery, setRecallQuery] = useState(null);
+  const [recallFile, setRecallFile] = useState(null);
   const [attachments, setAttachments] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -537,7 +540,14 @@ export default function Investigate() {
 
   async function deleteChat(id, e) {
     e.stopPropagation();
-    if (!(await dialog.confirm({ message: "Delete this investigation?", tone: "danger", confirmLabel: "Delete" }))) return;
+    if (
+      !(await dialog.confirm({
+        message: "Delete this investigation?",
+        tone: "danger",
+        confirmLabel: "Delete",
+      }))
+    )
+      return;
     await api.deleteChat(id);
     setChats((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -689,6 +699,13 @@ export default function Investigate() {
     if ((!input.trim() && attachments.length === 0) || streaming || !activeId)
       return;
     if (attachments.some((a) => a.uploading)) return;
+
+    // Don't submit /recall commands, just keep panel visible
+    if (input.match(/^\/recall\s+/)) {
+      setInput("");
+      return;
+    }
+
     const ws = connect();
     const message =
       input.trim() ||
@@ -825,8 +842,36 @@ export default function Investigate() {
     setInput(v);
     const cursor = e.target.selectionStart;
     const before = v.slice(0, cursor);
-    const m = before.match(/@([\w-]*)$/);
-    setMentionQuery(m ? m[1] : null);
+
+    // Check for /recall command
+    const recallMatch = v.match(/^\/recall\s+(.+)$/);
+    if (recallMatch) {
+      setRecallQuery(recallMatch[1]);
+      setMentionQuery(null);
+      setRecallFile(null);
+    } else {
+      setRecallQuery(null);
+
+      // Check for @mention
+      const m = before.match(/@([\w-]*)$/);
+      if (m) {
+        setMentionQuery(m[1]);
+        // Try to resolve file path for auto-mode recall
+        const query = m[1];
+        if (query && query.includes(".")) {
+          // Looks like a file mention
+          const file = repos
+            .flatMap((r) => r.files || [])
+            .find((f) => f.path.endsWith("/" + query) || f.filename === query);
+          setRecallFile(file ? file.path : null);
+        } else {
+          setRecallFile(null);
+        }
+      } else {
+        setMentionQuery(null);
+        setRecallFile(null);
+      }
+    }
   }
 
   function pickFolder(repo) {
@@ -1404,6 +1449,14 @@ export default function Investigate() {
                 onHover={setMentionIndex}
               />
             )}
+            {recallQuery || (mentionQuery && recallFile) ? (
+              <RecallPanel
+                query={recallQuery || mentionQuery}
+                file={recallFile}
+                project={companyId}
+                mode={recallQuery ? "command" : "auto"}
+              />
+            ) : null}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {attachments.map((a) => (

@@ -59,6 +59,14 @@ const IconUsage = () => (
   </svg>
 );
 
+const IconMonitor = () => (
+  <svg {...ICON}>
+    <rect x="3" y="4" width="18" height="14" rx="2" />
+    <path d="M8 20h8M12 18v2" />
+    <path d="M7 11l2 2 3-4 2 3 3-2" opacity="0.6" />
+  </svg>
+);
+
 const IconSettings = () => (
   <svg {...ICON}>
     <circle cx="12" cy="12" r="3" />
@@ -114,6 +122,7 @@ const configure = [
   { to: "/agents", label: "Agents & Skills", icon: IconAgents },
   { to: "/commands", label: "Commands", icon: IconCommand },
   { to: "/mcp", label: "MCP Servers", icon: IconMcp },
+  { to: "/monitor", label: "Monitor", icon: IconMonitor },
   { to: "/usage", label: "Usage", icon: IconUsage },
 ];
 
