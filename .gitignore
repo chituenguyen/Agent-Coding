@@ -10,3 +10,4 @@ attachments/
 .claude/hooks/notifications.log
 .workspace-name
 .cache/
+ui/coverage/
