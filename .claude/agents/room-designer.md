@@ -1,7 +1,7 @@
 ---
 name: room-designer
 description: Generate a draft Room (3-6 teams, each with a custom agent definition) from a free-form description. Output is strict JSON that the URI workspace persists into companies.json.
-model: sonnet
+model: opus
 ---
 
 # Room Designer Agent
