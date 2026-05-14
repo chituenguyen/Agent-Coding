@@ -36,21 +36,21 @@ flowchart TD
 
 | Agent           | Soul                                                     | Model  | Role                                                              |
 | --------------- | -------------------------------------------------------- | ------ | ----------------------------------------------------------------- |
-| Architect       | "Designing systems is my passion"                        | sonnet | Analyze requirements, write `SPEC.md`, label task type            |
-| Researcher      | "Knowledge is power"                                     | sonnet | Pull docs, libraries, best-practice notes into `research/`        |
-| Coder Backend   | "Clean, efficient code is art"                           | sonnet | Implement API, database, services per SPEC backend section        |
-| Coder Frontend  | "Beautiful UI is a conversation between design and code" | sonnet | Implement UI per SPEC frontend section, verify via browser MCP    |
-| Reviewer        | "Code quality is non-negotiable"                         | sonnet | Approve or write `issues.md` against the SPEC                     |
-| Debugger        | "Bugs fear me"                                           | sonnet | Resolve every entry in `issues.md`, write `fix-log.md`            |
-| Investigator    | "Every bug has a birth certificate — I find it"          | sonnet | Interactive root-cause investigation, on-demand                   |
-| Documenter      | "Clarity comes from showing, not just telling"           | sonnet | Write docs and Mermaid diagrams from SPEC and code                |
-| Learner         | "Every task is a lesson"                                 | haiku  | Extract reusable conventions into `projects/[project]/context.md` |
-| QC              | —                                                        | sonnet | Diff-aware test runs, coverage gap analysis, flaky-test isolation |
-| DevOps          | —                                                        | sonnet | Kubernetes manifests, Helm, ArgoCD, GitHub Actions                |
-| Brainstorm      | —                                                        | sonnet | CTO-style devil's advocate — surfaces approaches and tradeoffs    |
-| Finance         | —                                                        | sonnet | Market analysis via the TradingView MCP                           |
-| Room Designer   | —                                                        | sonnet | Generate room/team rosters from a free-form description           |
-| Prompt Enhancer | —                                                        | sonnet | Rewrite vague task descriptions into actionable agent prompts     |
+| Architect       | "Designing systems is my passion"                        | opus   | Analyze requirements, write `SPEC.md`, label task type            |
+| Researcher      | "Knowledge is power"                                     | opus   | Pull docs, libraries, best-practice notes into `research/`        |
+| Coder Backend   | "Clean, efficient code is art"                           | opus   | Implement API, database, services per SPEC backend section        |
+| Coder Frontend  | "Beautiful UI is a conversation between design and code" | opus   | Implement UI per SPEC frontend section, verify via browser MCP    |
+| Reviewer        | "Code quality is non-negotiable"                         | opus   | Approve or write `issues.md` against the SPEC                     |
+| Debugger        | "Bugs fear me"                                           | opus   | Resolve every entry in `issues.md`, write `fix-log.md`            |
+| Investigator    | "Every bug has a birth certificate — I find it"          | opus   | Interactive root-cause investigation, on-demand                   |
+| Documenter      | "Clarity comes from showing, not just telling"           | opus   | Write docs and Mermaid diagrams from SPEC and code                |
+| Learner         | "Every task is a lesson"                                 | opus   | Extract reusable conventions into `projects/[project]/context.md` |
+| QC              | —                                                        | opus   | Diff-aware test runs, coverage gap analysis, flaky-test isolation |
+| DevOps          | —                                                        | opus   | Kubernetes manifests, Helm, ArgoCD, GitHub Actions                |
+| Brainstorm      | —                                                        | opus   | CTO-style devil's advocate — surfaces approaches and tradeoffs    |
+| Finance         | —                                                        | opus   | Market analysis via the TradingView MCP                           |
+| Room Designer   | —                                                        | opus   | Generate room/team rosters from a free-form description           |
+| Prompt Enhancer | —                                                        | opus   | Rewrite vague task descriptions into actionable agent prompts     |
 
 Agents do not talk to each other directly in `/workflow`. The orchestrator reads each agent's output file and feeds it into the next agent's prompt.
 

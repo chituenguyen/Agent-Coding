@@ -126,6 +126,48 @@ Strategy 5 — High fan-out (BROADER SUITE)
 3. compile/build → vite build | tsc | go build | cargo build | etc.
 ```
 
+### Step 9.5: Browser E2E Smoke (frontend tasks only)
+
+Use **claude-in-chrome** — the Chrome extension that lets Claude read and interact with the browser. This is a real browser, not a headless tool.
+
+**How to use claude-in-chrome:**
+
+claude-in-chrome is a Chrome extension (not an MCP server). It is invoked by opening a tab in the user's Chrome browser and interacting through the extension's interface. In practice within agent tasks, this means:
+
+1. Ensure the dev server is running (`npm run dev` or equivalent)
+2. Open `http://localhost:<port>/<route>` in Chrome (user's browser)
+3. Use the claude-in-chrome extension to read the page, click elements, and capture console output
+
+**What to verify per route:**
+
+```
+/chat
+  - Model pill visible with correct label (e.g. "Opus 4.7", not "Sonnet" stale default)
+  - Click model pill → dropdown shows exactly the expected models from /api/models
+  - No console errors related to model fetch
+
+/settings
+  - Model radio options populated from API (not hardcoded)
+  - Labels prefixed "Claude " (e.g. "Claude Opus 4.7")
+  - Tag badges visible ("Most capable", "Recommended", "Fastest")
+
+/room-designer (or equivalent)
+  - Model dropdown not empty, populated from API
+
+Default-model bug fix (if applicable):
+  - Go to /settings, select a model, save
+  - Navigate to /chat, open a NEW thread
+  - Verify model pill reflects the saved Settings model
+```
+
+**Network verification:**
+
+After navigating to any page, check that `/api/models` was called and returned 200 with correct payload (visible in browser DevTools Network tab or via claude-in-chrome console inspection).
+
+**If claude-in-chrome is unavailable:**
+
+Fall back to HTTP-level checks (curl the routes for 200, verify API payload directly). Mark the browser smoke check as N/A with reason in the report — do not silently skip.
+
 ### Step 10: Write Report
 
 Create `tasks/[project]/[task-id]/qc/report.md`:
@@ -205,6 +247,7 @@ Verify ALL of these before completing the session:
 - [ ] Coverage target 80%+ on critical paths met (or blockers flagged)
 - [ ] Verdict (PASS / FAIL) documented with one-sentence reason
 - [ ] Any new tests match the repo's existing test style
+- [ ] (Frontend tasks) Browser smoke via claude-in-chrome completed, or explicitly marked N/A with reason
 
 ## Key Behavior
 
@@ -216,3 +259,4 @@ Verify ALL of these before completing the session:
 - **Honest verdict** — PASS or FAIL with file:line evidence
 - **Repo style preserved** — never introduce a new testing paradigm
 - **Surgical** — only test/touch files in the diff, no surrounding refactors
+- **Browser smoke via claude-in-chrome** — for frontend tasks, use the claude-in-chrome Chrome extension to verify UI renders correctly from API data; fall back to curl only if unavailable (mark N/A explicitly)

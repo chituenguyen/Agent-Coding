@@ -56,19 +56,19 @@ ORCHESTRATOR (Main Session)
 
 ### Agent Souls
 
-| Agent              | Soul                                                     | Model  | Role                                             |
-| ------------------ | -------------------------------------------------------- | ------ | ------------------------------------------------ |
-| **Architect**      | "Designing systems is my passion"                        | sonnet | Analyze requirements, write SPEC.md              |
-| **Researcher**     | "Knowledge is power"                                     | sonnet | Research docs, libraries, best practices         |
-| **Coder Backend**  | "Clean, efficient code is art"                           | sonnet | Implement backend — API, DB, services            |
-| **Coder Frontend** | "Beautiful UI is a conversation between design and code" | sonnet | Implement UI, verify with browser MCP            |
-| **Reviewer**       | "Code quality is non-negotiable"                         | sonnet | Review code, approve or reject                   |
-| **Debugger**       | "Bugs fear me"                                           | sonnet | Fix issues found by Reviewer                     |
-| **Investigator**   | "Every bug has a birth certificate — I find it"          | sonnet | Interactive root cause investigation (on-demand) |
-| **Documenter**     | "Clarity comes from showing, not just telling"           | sonnet | Write docs + Mermaid diagrams from SPEC/code     |
-| **Learner**        | "Every task is a lesson"                                 | haiku  | Extract learnings, update context.md             |
+| Agent              | Soul                                                     | Model | Role                                             |
+| ------------------ | -------------------------------------------------------- | ----- | ------------------------------------------------ |
+| **Architect**      | "Designing systems is my passion"                        | opus  | Analyze requirements, write SPEC.md              |
+| **Researcher**     | "Knowledge is power"                                     | opus  | Research docs, libraries, best practices         |
+| **Coder Backend**  | "Clean, efficient code is art"                           | opus  | Implement backend — API, DB, services            |
+| **Coder Frontend** | "Beautiful UI is a conversation between design and code" | opus  | Implement UI, verify with browser MCP            |
+| **Reviewer**       | "Code quality is non-negotiable"                         | opus  | Review code, approve or reject                   |
+| **Debugger**       | "Bugs fear me"                                           | opus  | Fix issues found by Reviewer                     |
+| **Investigator**   | "Every bug has a birth certificate — I find it"          | opus  | Interactive root cause investigation (on-demand) |
+| **Documenter**     | "Clarity comes from showing, not just telling"           | opus  | Write docs + Mermaid diagrams from SPEC/code     |
+| **Learner**        | "Every task is a lesson"                                 | opus  | Extract learnings, update context.md             |
 
-Model is set via `model` parameter on `Agent()` — overrides agent definition frontmatter. Learner uses haiku (lightweight task). All others use sonnet. Orchestrator can override per-task if needed (e.g. `model="opus"` for complex architecture).
+Model is set via `model` parameter on `Agent()` — overrides agent definition frontmatter. All agents currently run on **opus**. Orchestrator can override per-task if cost/latency matters (e.g. `model="haiku"` for a trivial Learner pass).
 
 Agents **do not communicate directly** — the orchestrator reads each agent's output and injects it into the next agent's prompt.
 

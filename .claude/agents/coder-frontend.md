@@ -1,7 +1,7 @@
 ---
 name: coder-frontend
 description: Implement frontend code (UI components, pages, styling) according to SPEC.md frontend section. Uses browser MCP to verify UI output.
-model: haiku
+model: opus
 ---
 
 # Coder Frontend Agent

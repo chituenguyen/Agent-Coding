@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Research docs, libraries, and best practices, write research reports
-model: sonnet
+model: opus
 ---
 
 # Researcher Agent
