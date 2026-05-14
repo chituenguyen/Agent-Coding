@@ -6,7 +6,7 @@
     "dev": "concurrently \"node server.js\" \"vite\"",
     "build": "vite build",
     "start": "node server.js",
-    "test": "node --test __tests__/memory.*.test.js",
+    "test": "node --test __tests__/*.test.js",
     "test:coverage": "npx c8 --include='server/memory/indexer.js' --include='server/memory/inject.js' --include='server/memory/recall.js' --check-coverage --lines 80 --functions 80 node --test __tests__/memory.*.test.js"
   },
   "dependencies": {

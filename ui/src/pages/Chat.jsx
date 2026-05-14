@@ -14,13 +14,6 @@ const ROLE_STYLES = {
   assistant: "bg-co-surface text-co-fg border border-co-fg/10",
 };
 
-const MODELS = [
-  { id: "sonnet", label: "Sonnet 4.6" },
-  { id: "opus", label: "Opus 4.7" },
-  { id: "opus-4-6", label: "Opus 4.6" },
-  { id: "haiku", label: "Haiku 4.5" },
-];
-
 function friendlyToolLabel(name, input = {}) {
   if (!name) return "Working...";
   if (name === "Task")
@@ -331,12 +324,22 @@ function StreamingBubble({ toolEvents, streamText }) {
   );
 }
 
+const slugToId = (s) => {
+  if (!s) return null;
+  if (s.startsWith("claude-opus")) return "opus";
+  if (s.startsWith("claude-sonnet")) return "sonnet";
+  if (s.startsWith("claude-haiku")) return "haiku";
+  return s; // already an id like "opus"
+};
+
 export default function Chat() {
   const [chats, setChats] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [activeChat, setActiveChat] = useState(null);
   const [agents, setAgents] = useState([]);
   const [repos, setRepos] = useState([]);
+  const [models, setModels] = useState([]);
+  const [defaultModel, setDefaultModel] = useState(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
@@ -371,6 +374,16 @@ export default function Chat() {
       .getRepositories()
       .then(setRepos)
       .catch(() => {});
+    api
+      .getModels()
+      .then((list) =>
+        setModels(list.map((m) => ({ id: m.id, label: m.label }))),
+      )
+      .catch(() => setModels([]));
+    api
+      .getSettings()
+      .then((s) => setDefaultModel(slugToId(s.model) || "sonnet"))
+      .catch(() => setDefaultModel("sonnet"));
   }, []);
 
   async function refreshChats() {
@@ -843,7 +856,7 @@ export default function Chat() {
   }
 
   const messages = activeChat?.messages || [];
-  const currentModel = activeChat?.model || "sonnet";
+  const currentModel = activeChat?.model || defaultModel || "sonnet";
   const folderPaths = activeChat?.folderPaths || [];
   const folderPills = folderPaths.map((p) => {
     const repo = repos.find((r) => r.repoPath === p);
@@ -1576,7 +1589,7 @@ export default function Chat() {
                     <circle cx="12" cy="12" r="10" />
                     <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
                   </svg>
-                  {MODELS.find((m) => m.id === currentModel)?.label || "Auto"}
+                  {models.find((m) => m.id === currentModel)?.label || "Auto"}
                   <svg
                     width="10"
                     height="10"
@@ -1695,7 +1708,7 @@ export default function Chat() {
                     onClick={() => setModelMenuOpen(false)}
                   />
                   <div className="absolute bottom-full left-5 z-40 mb-2 w-48 overflow-hidden rounded-co border border-co-fg/10 bg-co-surface shadow-[0_8px_32px_-12px_rgba(0,0,0,0.25)]">
-                    {MODELS.map((m) => (
+                    {models.map((m) => (
                       <button
                         key={m.id}
                         onClick={() => {

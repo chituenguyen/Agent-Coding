@@ -17,7 +17,6 @@ const PRESET_COLORS = [
 
 const SAFE_TOOLS = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"];
 const DANGEROUS_TOOLS = ["Edit", "Write", "Bash", "Task", "NotebookEdit"];
-const MODELS = ["sonnet", "haiku", "opus"];
 
 export default function RoomDesigner() {
   const { companyId } = useParams();
@@ -33,12 +32,17 @@ export default function RoomDesigner() {
   const [staleChecking, setStaleChecking] = useState(false);
   const [turns, setTurns] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [models, setModels] = useState([]);
 
   useEffect(() => {
     api
       .getCompany(companyId)
       .then(setCompany)
       .catch((e) => setError(e.message));
+    api
+      .getModels()
+      .then((list) => setModels(list.map((m) => m.id)))
+      .catch(() => setModels([]));
   }, [companyId]);
 
   async function handleGenerate() {
@@ -511,7 +515,7 @@ function TeamCard({
               onChange={(e) => onChangeAgentDef({ model: e.target.value })}
               className="rounded-co-sm border border-co-fg/10 bg-co-bg/40 px-2 py-0.5 text-xs focus:border-co-fg/30 focus:outline-none"
             >
-              {MODELS.map((m) => (
+              {models.map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>

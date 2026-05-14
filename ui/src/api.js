@@ -76,6 +76,9 @@ export const api = {
   getWorkspaceName: () => req("GET", "/workspace-name"),
   setWorkspaceName: (name) => req("PUT", "/workspace-name", { name }),
 
+  // Models
+  getModels: () => req("GET", "/models"),
+
   // Settings
   getSettings: () => req("GET", "/settings"),
   saveSettings: (data) => req("PUT", "/settings", data),

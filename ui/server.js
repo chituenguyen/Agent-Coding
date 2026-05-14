@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import matter from "gray-matter";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { getDb } from "./server/memory/db.js";
 import { startIndexer } from "./server/memory/indexer.js";
 import { recallContext } from "./server/memory/recall.js";
@@ -16,7 +16,7 @@ import {
   rm,
   stat,
 } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, realpathSync, statSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
@@ -3620,6 +3620,103 @@ app.delete("/api/chats/:id", async (req, res) => {
   try {
     if (existsSync(chatPath(req.params.id))) await rm(chatPath(req.params.id));
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Claude model auto-detection ───────────────────────────────────────────
+
+const FALLBACK_MODELS = [
+  { id: "opus", slug: "claude-opus-4-7", label: "Opus 4.7", latest: true },
+  {
+    id: "sonnet",
+    slug: "claude-sonnet-4-6",
+    label: "Sonnet 4.6",
+    latest: false,
+  },
+  { id: "haiku", slug: "claude-haiku-4-5", label: "Haiku 4.5", latest: false },
+];
+
+const MODEL_RE = /^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?$/;
+
+let _modelCache = { mtime: null, list: null };
+
+function parseModelStrings(rawStringsOutput) {
+  const slugs = rawStringsOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => MODEL_RE.test(line));
+
+  if (slugs.length === 0) return null;
+
+  const parsed = slugs.map((slug) => {
+    const match = slug.match(MODEL_RE);
+    return {
+      family: match[1],
+      major: parseInt(match[2], 10),
+      minor: match[3] ? parseInt(match[3], 10) : 0,
+      slug,
+    };
+  });
+
+  const grouped = {};
+  parsed.forEach((p) => {
+    if (!grouped[p.family]) grouped[p.family] = [];
+    grouped[p.family].push(p);
+  });
+
+  const families = ["opus", "sonnet", "haiku"];
+  const result = [];
+
+  for (const family of families) {
+    if (grouped[family]) {
+      const sorted = grouped[family].sort(
+        (a, b) => b.major - a.major || b.minor - a.minor,
+      );
+      const best = sorted[0];
+      result.push({
+        id: family,
+        slug: best.slug,
+        label: `${family[0].toUpperCase()}${family.slice(1)} ${best.major}.${best.minor}`,
+        latest: family === "opus",
+      });
+    }
+  }
+
+  return result.length > 0 ? result : null;
+}
+
+function detectClaudeModels() {
+  try {
+    const claudePath = execSync("which claude", { encoding: "utf8" }).trim();
+    const real = realpathSync(claudePath);
+    const mtime = statSync(real).mtimeMs;
+
+    if (_modelCache.mtime === mtime && _modelCache.list) {
+      return _modelCache.list;
+    }
+
+    const stringsOutput = execSync(
+      `strings "${real}" | grep -E "^claude-(opus|sonnet|haiku)-[0-9]+(\\-[0-9]+)?$" | sort -u`,
+      { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 },
+    );
+
+    const parsed = parseModelStrings(stringsOutput);
+    if (!parsed) {
+      return FALLBACK_MODELS;
+    }
+
+    _modelCache = { mtime, list: parsed };
+    return parsed;
+  } catch {
+    return FALLBACK_MODELS;
+  }
+}
+
+app.get("/api/models", (req, res) => {
+  try {
+    res.json(detectClaudeModels());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
