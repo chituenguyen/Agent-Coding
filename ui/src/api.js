@@ -147,65 +147,6 @@ export const api = {
   // Usage
   getUsage: () => req("GET", "/usage"),
 
-  // Monitor (abtop)
-  checkMonitor: () => req("GET", "/monitor/check"),
-  getMonitorSnapshot: () => req("GET", "/monitor/snapshot"),
-  installMonitor: ({ onLog, onDone } = {}) => {
-    const ctrl = new AbortController();
-    (async () => {
-      try {
-        const resp = await fetch(BASE + "/monitor/install", {
-          method: "POST",
-          signal: ctrl.signal,
-        });
-        if (!resp.ok) {
-          let msg = `HTTP ${resp.status}`;
-          try {
-            const j = await resp.json();
-            msg = j.error || msg;
-          } catch {
-            /* noop */
-          }
-          onDone?.({ ok: false, code: -1, error: msg });
-          return;
-        }
-        const reader = resp.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          let idx;
-          while ((idx = buf.indexOf("\n\n")) >= 0) {
-            const raw = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            let event = "message";
-            let data = "";
-            for (const line of raw.split("\n")) {
-              if (line.startsWith("event:")) event = line.slice(6).trim();
-              else if (line.startsWith("data:")) data += line.slice(5).trim();
-            }
-            if (!data) continue;
-            let parsed;
-            try {
-              parsed = JSON.parse(data);
-            } catch {
-              continue;
-            }
-            if (event === "log") onLog?.(parsed);
-            else if (event === "done") onDone?.(parsed);
-          }
-        }
-      } catch (e) {
-        if (e.name !== "AbortError") {
-          onDone?.({ ok: false, code: -1, error: e.message || String(e) });
-        }
-      }
-    })();
-    return () => ctrl.abort();
-  },
-
   // Uploads — accepts {filename, data (base64 or data URL), contentType}
   uploadAttachment: (data) => req("POST", "/uploads", data),
 
