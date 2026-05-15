@@ -3,14 +3,54 @@ import { readFile, writeFile, stat, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import crypto from "crypto";
+import { spawn } from "child_process";
 
 import { WORKSPACE, GLOBAL_CLAUDE_JSON, attachmentsDir } from "../lib/paths.js";
 import { getRepos } from "../lib/mcp-config.js";
 import { readUsageEntries } from "../lib/usage.js";
+import { runPromptEnhancer } from "../lib/prompt-enhancer.js";
 import { getDb } from "../memory/db.js";
 import { recallContext } from "../memory/recall.js";
+import { isRemoteRequest } from "./remote.js";
 
 const router = Router();
+
+router.post("/api/browse-folder", async (req, res) => {
+  // Remote devices cannot trigger an osascript dialog on the host Mac.
+  if (isRemoteRequest(req)) {
+    return res.json({ remote: true });
+  }
+
+  const { prompt: dialogPrompt = "Select repository folder" } = req.body || {};
+  const escaped = dialogPrompt.replace(/'/g, "\\'");
+  const proc = spawn(
+    `osascript -e 'POSIX path of (choose folder with prompt "${escaped}")'`,
+    [],
+    { shell: true },
+  );
+  let out = "",
+    err = "";
+  proc.stdout.on("data", (c) => {
+    out += c.toString();
+  });
+  proc.stderr.on("data", (c) => {
+    err += c.toString();
+  });
+  proc.on("close", (code) => {
+    if (code !== 0) return res.status(400).json({ cancelled: true });
+    res.json({ path: out.trim().replace(/\/$/, "") });
+  });
+  proc.on("error", (e) => res.status(500).json({ error: e.message }));
+});
+
+router.post("/api/improve-prompt", async (req, res) => {
+  const { description, mode, targetRepo } = req.body;
+  if (!description?.trim())
+    return res.status(400).json({ error: "description required" });
+  if (!targetRepo?.trim())
+    return res.status(400).json({ error: "targetRepo required" });
+  await runPromptEnhancer({ description, mode, targetRepo }, res);
+});
 
 router.post("/api/fs/validate-path", async (req, res) => {
   try {
