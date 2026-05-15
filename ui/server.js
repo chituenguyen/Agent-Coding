@@ -113,6 +113,7 @@ import {
   runCompactIfNeeded,
 } from "./server/lib/compact.js";
 import chatRouter from "./server/routes/chat.js";
+import { runningWorkflows } from "./server/state/workflows.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -991,9 +992,6 @@ app.use(claudeFsRouter);
 app.use(workspaceRouter);
 
 // ─── running workflows (global, survives WebSocket disconnect) ──────────────
-
-// Key = taskPath, Value = { proc, output: string[], exitCode: number|null }
-const runningWorkflows = new Map();
 
 // REST endpoint: check if a workflow is running or has buffered output
 app.get("/api/workflows/:taskPath(*)", (req, res) => {
