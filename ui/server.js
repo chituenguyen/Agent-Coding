@@ -92,6 +92,26 @@ import { remoteSession, parseCookies } from "./server/state/remote.js";
 import remoteRouter from "./server/routes/remote.js";
 import monitorRouter from "./server/routes/monitor.js";
 import { createApp } from "./server/app.js";
+import {
+  activeChatProcs,
+  chatSubscribers,
+  chatEditedPaths,
+  rememberEditedPath,
+  addChatSubscriber,
+  broadcastToChat,
+} from "./server/state/chat.js";
+import {
+  chatPath,
+  ensureChatsDir,
+  readChat,
+  writeChat,
+  sanitizeFilename,
+  chatSpawnCwd,
+} from "./server/lib/chat-files.js";
+import {
+  AUTO_COMPACT_TOKENS,
+  runCompactIfNeeded,
+} from "./server/lib/compact.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -793,15 +813,6 @@ app.use(catalogRouter);
 
 app.use(companiesRouter);
 
-function chatSpawnCwd(chat) {
-  // Trading + no-folder chats land here → WORKSPACE.
-  const folders = (chat?.folderPaths || []).filter(
-    (p) => p && p !== WORKSPACE && existsSync(p),
-  );
-  return folders[0] || WORKSPACE;
-}
-const chatCompactCwd = chatSpawnCwd;
-
 app.use(repositoriesRouter);
 app.use(graphRouter);
 
@@ -983,98 +994,6 @@ app.use(workspaceRouter);
 // Key = taskPath, Value = { proc, output: string[], exitCode: number|null }
 const runningWorkflows = new Map();
 
-// Key = chatId, Value = { proc, assistantText, toolEvents }.
-// Tracks the *currently running* proc for a chat so we can guard against
-// duplicate sends and snapshot in-progress state for chat-resume.
-const activeChatProcs = new Map();
-
-// Key = chatId, Value = Set<ws>. Persistent across procs — a UI tab that
-// chat-subscribed once stays in the set until the ws closes or it explicitly
-// unsubscribes, so it receives events from *any* future spawn on that chat.
-const chatSubscribers = new Map();
-
-// Auto-compact threshold. When a turn's total context (prompt + cache + output)
-// reaches this, the next user send transparently runs `/compact` first so the
-// resumed session starts with a summarised history. Hard-coded 200k * 70%.
-const AUTO_COMPACT_TOKENS = 140_000;
-
-async function runCompactIfNeeded(chat, broadcast) {
-  const tokens = chat.lastContextTokens || 0;
-  if (tokens < AUTO_COMPACT_TOKENS || !chat.sessionId) return false;
-  broadcast?.({
-    type: "chat-tool",
-    name: "Compact",
-    input: { reason: `context ${tokens} tokens (>= ${AUTO_COMPACT_TOKENS})` },
-  });
-  return await new Promise((resolve) => {
-    const args = [
-      "-p",
-      "/compact",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--dangerously-skip-permissions",
-      "--resume",
-      chat.sessionId,
-    ];
-    const spawnCwd = chatCompactCwd(chat);
-    if (spawnCwd !== WORKSPACE) args.push("--add-dir", WORKSPACE);
-    const proc = spawn("claude", args, {
-      cwd: spawnCwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let buf = "";
-    let newSid = null;
-    proc.stdout.on("data", (chunk) => {
-      buf += chunk.toString();
-      const lines = buf.split("\n");
-      buf = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const e = JSON.parse(line);
-          if (e.session_id) newSid = e.session_id;
-        } catch {}
-      }
-    });
-    proc.on("close", () => {
-      if (newSid && newSid !== chat.sessionId) chat.sessionId = newSid;
-      // After compaction the next prompt starts fresh — reset the counter so
-      // we don't loop-compact while the new session is still small.
-      chat.lastContextTokens = 0;
-      resolve(true);
-    });
-    proc.on("error", () => resolve(false));
-  });
-}
-
-// Key = chatId, Value = Set<absolute file path>. Tracks files the agent has
-// touched via Edit/Write/MultiEdit during this server's lifetime. The
-// /api/chats/:id/file endpoint allows reading these even when they fall
-// outside WORKSPACE/folderPaths — since the agent already wrote them,
-// letting the operator *view* them is strictly less invasive.
-const chatEditedPaths = new Map();
-function rememberEditedPath(chatId, p) {
-  if (!chatId || !p) return;
-  if (!chatEditedPaths.has(chatId)) chatEditedPaths.set(chatId, new Set());
-  chatEditedPaths.get(chatId).add(path.resolve(p));
-}
-
-function addChatSubscriber(chatId, ws) {
-  if (!chatSubscribers.has(chatId)) chatSubscribers.set(chatId, new Set());
-  chatSubscribers.get(chatId).add(ws);
-}
-
-function broadcastToChat(chatId, payload) {
-  const subs = chatSubscribers.get(chatId);
-  if (!subs || subs.size === 0) return;
-  const data = JSON.stringify(payload);
-  for (const ws of subs) {
-    if (ws.readyState === 1) ws.send(data);
-  }
-}
-
 // REST endpoint: check if a workflow is running or has buffered output
 app.get("/api/workflows/:taskPath(*)", (req, res) => {
   const wf = runningWorkflows.get(req.params.taskPath);
@@ -1123,25 +1042,6 @@ app.use(remoteRouter);
 app.use(monitorRouter);
 
 // ─── chat ────────────────────────────────────────────────────────────────────
-const chatPath = (id) => path.join(chatsDir(), `${id}.json`);
-
-async function ensureChatsDir() {
-  if (!existsSync(chatsDir())) await mkdir(chatsDir(), { recursive: true });
-}
-
-async function readChat(id) {
-  try {
-    return JSON.parse(await readFile(chatPath(id), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function writeChat(chat) {
-  await ensureChatsDir();
-  await writeFile(chatPath(chat.id), JSON.stringify(chat, null, 2));
-}
-
 app.get("/api/chats", async (req, res) => {
   try {
     await ensureChatsDir();
