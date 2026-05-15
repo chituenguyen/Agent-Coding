@@ -11,6 +11,7 @@ import {
   defaultEngineerRoom,
   saveCompanyLogo,
 } from "../lib/companies.js";
+import { validateAgentDef, runRoomDesigner } from "../lib/room-designer.js";
 
 const router = Router();
 
@@ -393,5 +394,178 @@ router.delete("/api/companies/:companyId", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── room designer (AI-assisted room creation) ──────────────────────────────
+
+// Start: generate a draft room from a free-form description.
+// Streams NDJSON: { chunk: "..." } progress events, then { done: true, result }.
+router.post(
+  "/api/companies/:companyId/rooms/design/start",
+  async (req, res) => {
+    const { companyId } = req.params;
+    const { description } = req.body || {};
+    if (!description?.trim())
+      return res.status(400).json({ error: "description required" });
+
+    let companyContext = "";
+    try {
+      const data = await readCompaniesFile();
+      const company = (data.companies || []).find((c) => c.id === companyId);
+      if (company) {
+        const roomNames = (company.rooms || []).map((r) => r.name).join(", ");
+        companyContext = `Company: ${company.name}. Existing rooms: ${roomNames || "none"}.`;
+      }
+    } catch {
+      // best-effort context — generation still works without it
+    }
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+    const send = (obj) => res.write(JSON.stringify(obj) + "\n");
+
+    try {
+      const result = await runRoomDesigner(
+        { mode: "start", description: description.trim(), companyContext },
+        { stream: true, res },
+      );
+      send({ done: true, result });
+      res.end();
+    } catch (err) {
+      send({ error: err.message });
+      res.end();
+    }
+  },
+);
+
+router.post(
+  "/api/companies/:companyId/rooms/design/regen-agent",
+  async (req, res) => {
+    try {
+      const { currentRoom, teamId, instructions = "" } = req.body || {};
+      if (!currentRoom || !teamId)
+        return res
+          .status(400)
+          .json({ error: "currentRoom and teamId required" });
+      const result = await runRoomDesigner({
+        mode: "regen-agent",
+        currentRoom,
+        teamId,
+        instructions,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+router.post(
+  "/api/companies/:companyId/rooms/design/check-stale",
+  async (req, res) => {
+    try {
+      const { currentRoom, editedTeamId, previousAgentDef } = req.body || {};
+      if (!currentRoom || !editedTeamId)
+        return res
+          .status(400)
+          .json({ error: "currentRoom and editedTeamId required" });
+      const result = await runRoomDesigner({
+        mode: "check-stale",
+        currentRoom,
+        editedTeamId,
+        previousAgentDef,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+router.post(
+  "/api/companies/:companyId/rooms/design/finalize",
+  async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { id: rawId, name, description = "", teams = [] } = req.body || {};
+      if (!name?.trim())
+        return res.status(400).json({ error: "name is required" });
+      if (!Array.isArray(teams) || teams.length === 0)
+        return res.status(400).json({ error: "at least one team is required" });
+
+      const roomId = slugifyCompanyId(rawId || name);
+      if (!roomId)
+        return res.status(400).json({ error: "could not derive id from name" });
+
+      const cleanedTeams = [];
+      const seenTeamIds = new Set();
+      for (const t of teams) {
+        if (!t?.name?.trim())
+          return res.status(400).json({ error: "team name required" });
+        const tid = slugifyCompanyId(t.id || t.name);
+        if (!tid)
+          return res
+            .status(400)
+            .json({ error: `could not derive id for team ${t.name}` });
+        if (seenTeamIds.has(tid))
+          return res.status(400).json({ error: `duplicate team id: ${tid}` });
+        seenTeamIds.add(tid);
+
+        const hasSlug = typeof t.agent === "string" && t.agent.trim();
+        const hasDef = t.agentDef && typeof t.agentDef === "object";
+        if (!hasSlug && !hasDef)
+          return res
+            .status(400)
+            .json({ error: `team ${t.name}: needs agent slug or agentDef` });
+
+        const team = {
+          id: tid,
+          name: t.name.trim(),
+          tagline: String(t.tagline || "").trim(),
+          color: String(t.color || "#6b7280").trim(),
+          icon: String(t.icon || ""),
+          repos: Array.isArray(t.repos) ? t.repos.filter(Boolean) : [],
+        };
+        if (hasSlug) team.agent = t.agent.trim();
+        if (hasDef) {
+          const err = validateAgentDef(t.agentDef, `team ${t.name}`);
+          if (err) return res.status(400).json({ error: err });
+          team.agentDef = {
+            model: t.agentDef.model || "sonnet",
+            tools: Array.isArray(t.agentDef.tools) ? t.agentDef.tools : [],
+            description: String(t.agentDef.description || "").trim(),
+            systemPrompt: String(t.agentDef.systemPrompt).trim(),
+          };
+          if (t.agentDef.tools_acknowledged)
+            team.agentDef.tools_acknowledged = true;
+        }
+        cleanedTeams.push(team);
+      }
+
+      const data = await readCompaniesFile();
+      const company = (data.companies || []).find((c) => c.id === companyId);
+      if (!company) return res.status(404).json({ error: "company not found" });
+      company.rooms = company.rooms || [];
+      if (company.rooms.some((r) => r.id === roomId))
+        return res
+          .status(409)
+          .json({ error: `room '${roomId}' already exists` });
+
+      const room = {
+        id: roomId,
+        name: name.trim(),
+        description: String(description || "").trim(),
+        kind: "engineer",
+        layout: "teams",
+        teams: cleanedTeams,
+      };
+      company.rooms.push(room);
+      await writeCompaniesFile(data);
+      res.status(201).json({ company, room });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 export default router;
