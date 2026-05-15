@@ -44,6 +44,13 @@ import {
   GLOBAL_CLAUDE_JSON,
   PROJECT_MCP_JSON,
 } from "./server/lib/paths.js";
+import {
+  readIfExists,
+  readJsonSafe,
+  statSafe,
+  lstatSafe,
+  listDirEntries,
+} from "./server/lib/fs-json.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -119,11 +126,6 @@ if (existsSync(path.join(__dirname, "dist"))) {
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-
-async function readIfExists(filePath) {
-  if (!existsSync(filePath)) return null;
-  return readFile(filePath, "utf8");
-}
 
 function deriveStatus(taskDir) {
   const has = (f) => existsSync(path.join(taskDir, f));
@@ -1776,32 +1778,6 @@ function invalidateHealthCache(name) {
   REPO_HEALTH_CACHE.delete(name);
 }
 
-async function readJsonSafe(absPath) {
-  try {
-    return JSON.parse(await readFile(absPath, "utf8"));
-  } catch (err) {
-    if (err && err.code === "ENOENT") return null;
-    console.warn(`[scan] unreadable ${absPath}: ${err.message}`);
-    return undefined; // exists but unparseable
-  }
-}
-
-async function statSafe(absPath) {
-  try {
-    return await stat(absPath);
-  } catch {
-    return null;
-  }
-}
-
-async function listDirEntries(absPath) {
-  try {
-    return await readdir(absPath, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-}
-
 async function scanRepoHealth(repo, companyMap, globalClaude) {
   const repoPath = repo.path || "";
   const company = lookupCompanyForPath(companyMap, repoPath);
@@ -2090,14 +2066,6 @@ async function listWorkspaceLinkSources() {
     out[kind] = sources;
   }
   return out;
-}
-
-async function lstatSafe(p) {
-  try {
-    return await lstat(p);
-  } catch {
-    return null;
-  }
 }
 
 async function linkRepo(repoPath) {
