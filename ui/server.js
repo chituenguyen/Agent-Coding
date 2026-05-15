@@ -88,29 +88,12 @@ import {
   ensureGitignore,
 } from "./server/lib/workspace-links.js";
 import repositoriesRouter from "./server/routes/repositories.js";
+import { remoteSession, parseCookies } from "./server/state/remote.js";
+import remoteRouter from "./server/routes/remote.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── remote control (cloudflare tunnel + cookie pairing) ───────────────────
-
-let remoteSession = {
-  active: false,
-  token: null, // one-time pairing token in QR URL
-  sessionId: null, // cookie value for paired device
-  pairedAt: null,
-  tunnelUrl: null,
-  tunnelProc: null, // cloudflared child process
-};
-
-function parseCookies(cookieHeader) {
-  const cookies = {};
-  if (!cookieHeader) return cookies;
-  cookieHeader.split(";").forEach((c) => {
-    const [k, ...v] = c.trim().split("=");
-    if (k) cookies[k] = v.join("=");
-  });
-  return cookies;
-}
 
 const app = express();
 const server = createServer(app);
@@ -856,7 +839,6 @@ app.use(catalogRouter);
 
 app.use(companiesRouter);
 
-
 function chatSpawnCwd(chat) {
   // Trading + no-folder chats land here → WORKSPACE.
   const folders = (chat?.folderPaths || []).filter(
@@ -1320,121 +1302,7 @@ app.get("/api/queue/status", (req, res) => {
   });
 });
 
-// ─── remote control API ─────────────────────────────────────────────────────
-
-app.get("/api/remote/status", (req, res) => {
-  res.json({
-    active: remoteSession.active,
-    paired: !!remoteSession.sessionId,
-    pairedAt: remoteSession.pairedAt,
-    tunnelUrl: remoteSession.tunnelUrl,
-    isCurrentDeviceRemote: isRemoteRequest(req),
-    // Include QR so it survives page refresh
-    ...(remoteSession.active && !remoteSession.sessionId
-      ? { qrDataUrl: remoteSession.qrDataUrl, url: remoteSession.pairUrl }
-      : {}),
-  });
-});
-
-app.post("/api/remote/enable", async (req, res) => {
-  try {
-    // Kill existing tunnel
-    if (remoteSession.tunnelProc) {
-      remoteSession.tunnelProc.kill();
-      remoteSession.tunnelProc = null;
-    }
-
-    const token = crypto.randomUUID();
-
-    // Start cloudflared quick tunnel
-    const proc = spawn(
-      CLOUDFLARED_BIN,
-      ["tunnel", "--url", `http://localhost:${PORT}`],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-
-    // Parse tunnel URL from stderr output
-    const tunnelUrl = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Tunnel creation timed out")),
-        15000,
-      );
-      let stderr = "";
-      proc.stderr.on("data", (chunk) => {
-        stderr += chunk.toString();
-        const match = stderr.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-        if (match) {
-          clearTimeout(timeout);
-          resolve(match[0]);
-        }
-      });
-      proc.on("exit", (code) => {
-        clearTimeout(timeout);
-        reject(new Error(`cloudflared exited with code ${code}`));
-      });
-    });
-
-    const pairUrl = `${tunnelUrl}/?pair=${token}`;
-    const qrDataUrl = await QRCode.toDataURL(pairUrl, {
-      width: 280,
-      margin: 2,
-    });
-
-    remoteSession = {
-      active: true,
-      token,
-      sessionId: null,
-      pairedAt: null,
-      tunnelUrl,
-      tunnelProc: proc,
-      pairUrl,
-      qrDataUrl,
-    };
-
-    proc.on("exit", () => {
-      if (remoteSession.tunnelProc === proc) {
-        remoteSession = {
-          active: false,
-          token: null,
-          sessionId: null,
-          pairedAt: null,
-          tunnelUrl: null,
-          tunnelProc: null,
-          pairUrl: null,
-          qrDataUrl: null,
-        };
-        console.log("[Remote] Tunnel closed");
-      }
-    });
-
-    console.log(`[Remote] Tunnel open → ${tunnelUrl}`);
-    res.json({ url: pairUrl, qrDataUrl, tunnelUrl });
-  } catch (err) {
-    if (remoteSession.tunnelProc) {
-      remoteSession.tunnelProc.kill();
-      remoteSession.tunnelProc = null;
-    }
-    res.status(500).json({ error: `Failed to create tunnel: ${err.message}` });
-  }
-});
-
-app.post("/api/remote/disable", (req, res) => {
-  if (remoteSession.tunnelProc) {
-    remoteSession.tunnelProc.kill();
-    remoteSession.tunnelProc = null;
-  }
-  remoteSession = {
-    active: false,
-    token: null,
-    sessionId: null,
-    pairedAt: null,
-    tunnelUrl: null,
-    tunnelProc: null,
-  };
-  res.json({ ok: true });
-});
+app.use(remoteRouter);
 
 // ─── abtop monitor ──────────────────────────────────────────────────────────
 let monitorCache = { at: 0, text: "", missing: false };
