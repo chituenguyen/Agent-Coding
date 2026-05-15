@@ -8,3 +8,6 @@ export const modelCache = { mtime: null, list: null };
 // Repo health scan cache. Owner: lib/repo-health.js. Per-entry TTL 30s.
 export const REPO_HEALTH_CACHE = new Map(); // name → { at: number, payload }
 export const REPO_HEALTH_TTL_MS = 30_000;
+
+// abtop monitor snapshot cache. Owner: lib/monitor.js. TTL = MONITOR_TTL_MS in monitor.js.
+export const monitorCache = { at: 0, text: "", missing: false };
