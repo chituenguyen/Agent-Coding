@@ -26,17 +26,28 @@ import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
 import QRCode from "qrcode";
+import {
+  WORKSPACE,
+  PORT,
+  CLOUDFLARED_BIN,
+  mcpServerPath,
+  queuePath,
+  usagePath,
+  attachmentsDir,
+  chatsDir,
+  agentsDir,
+  skillsDir,
+  commandsDir,
+  WORKSPACE_NAME_FILE,
+  DEFAULT_WORKSPACE_NAME,
+  GLOBAL_SETTINGS,
+  GLOBAL_CLAUDE_JSON,
+  PROJECT_MCP_JSON,
+} from "./server/lib/paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// server.js lives in ui/, workspace is the parent
-const WORKSPACE = path.resolve(__dirname, "..");
 
 // ─── remote control (cloudflare tunnel + cookie pairing) ───────────────────
-
-const CLOUDFLARED_BIN = path.join(
-  __dirname,
-  "node_modules/cloudflared/bin/cloudflared",
-);
 
 let remoteSession = {
   active: false,
@@ -801,8 +812,6 @@ ${description}
 });
 
 // ─── mcp_server.json (single source of truth for catalog + repositories) ────
-
-const mcpServerPath = path.join(WORKSPACE, "mcp_server.json");
 
 async function readMcpServer() {
   try {
@@ -2776,8 +2785,6 @@ app.post("/api/repositories/:project/graph/index", async (req, res) => {
 
 // ─── queue ───────────────────────────────────────────────────────────────────
 
-const queuePath = () => path.join(WORKSPACE, "queue.json");
-
 async function readQueue() {
   try {
     const raw = await readFile(queuePath(), "utf8");
@@ -2945,11 +2952,6 @@ app.post("/api/queue/reorder", async (req, res) => {
 
 // ─── settings ────────────────────────────────────────────────────────────────
 
-const GLOBAL_SETTINGS = path.join(
-  process.env.HOME || process.env.USERPROFILE,
-  ".claude/settings.json",
-);
-
 async function readSettings() {
   try {
     return JSON.parse(await readFile(GLOBAL_SETTINGS, "utf8"));
@@ -2959,9 +2961,6 @@ async function readSettings() {
 }
 
 // ─── workspace name (stored in gitignored file at workspace root) ────────────
-
-const WORKSPACE_NAME_FILE = path.join(WORKSPACE, ".workspace-name");
-const DEFAULT_WORKSPACE_NAME = "Platform";
 
 async function readWorkspaceName() {
   try {
@@ -3036,12 +3035,6 @@ function deepMerge(target, source) {
 }
 
 // ─── mcp ─────────────────────────────────────────────────────────────────────
-
-const GLOBAL_CLAUDE_JSON = path.join(
-  process.env.HOME || process.env.USERPROFILE,
-  ".claude.json",
-);
-const PROJECT_MCP_JSON = path.join(WORKSPACE, ".mcp.json");
 
 async function readGlobalClaude() {
   try {
@@ -3166,8 +3159,6 @@ app.delete("/api/mcp/:scope/:name", async (req, res) => {
 
 // ─── agents ─────────────────────────────────────────────────────────────────
 
-const agentsDir = () => path.join(WORKSPACE, ".claude/agents");
-
 app.get("/api/agents", async (req, res) => {
   try {
     const files = await readdir(agentsDir());
@@ -3235,8 +3226,6 @@ app.delete("/api/agents/:filename", async (req, res) => {
 
 // ─── skills ──────────────────────────────────────────────────────────────────
 
-const skillsDir = () => path.join(WORKSPACE, ".claude/skills");
-
 app.get("/api/skills", async (req, res) => {
   try {
     const entries = await readdir(skillsDir(), { withFileTypes: true });
@@ -3301,8 +3290,6 @@ app.delete("/api/skills/:dirname", async (req, res) => {
 });
 
 // ─── commands ────────────────────────────────────────────────────────────────
-
-const commandsDir = () => path.join(WORKSPACE, ".claude/commands");
 
 app.get("/api/commands", async (req, res) => {
   try {
@@ -3815,7 +3802,6 @@ app.post("/api/remote/disable", (req, res) => {
 });
 
 // ─── attachments ────────────────────────────────────────────────────────────
-const attachmentsDir = () => path.join(WORKSPACE, "attachments");
 
 async function ensureAttachmentsDir() {
   if (!existsSync(attachmentsDir()))
@@ -3853,7 +3839,6 @@ app.post("/api/uploads", async (req, res) => {
 });
 
 // ─── usage tracking ─────────────────────────────────────────────────────────
-const usagePath = () => path.join(WORKSPACE, "usage.jsonl");
 
 async function logUsage(entry) {
   const line =
@@ -4254,7 +4239,6 @@ app.get("/api/account", async (req, res) => {
 });
 
 // ─── chat ────────────────────────────────────────────────────────────────────
-const chatsDir = () => path.join(WORKSPACE, "chats");
 const chatPath = (id) => path.join(chatsDir(), `${id}.json`);
 
 async function ensureChatsDir() {
@@ -5953,7 +5937,6 @@ async function queueTick() {
 
 setInterval(queueTick, 5000);
 
-const PORT = process.env.PORT || 3001;
 migrateProjectMcpFiles().catch(() => {});
 
 (async () => {
