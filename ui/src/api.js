@@ -132,6 +132,65 @@ export const api = {
   indexRepoGraph: (project) =>
     req("POST", `/repositories/${project}/graph/index`),
 
+  // Repo Health (per-repo CLAUDE/MCP/agents/skills/settings snapshot)
+  getRepoHealth: (name) =>
+    req("GET", `/repositories/${encodeURIComponent(name)}/health`),
+  getRepoLinkStatus: (name) =>
+    req("GET", `/repositories/${encodeURIComponent(name)}/link-status`),
+  repairRepoLinks: (name, opts) =>
+    req(
+      "POST",
+      `/repositories/${encodeURIComponent(name)}/repair-links`,
+      opts || {},
+    ),
+  getRepoClaudeMd: async (name) => {
+    const res = await fetch(
+      `${BASE}/repositories/${encodeURIComponent(name)}/claude-md`,
+    );
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* empty */
+    }
+    if (res.status === 404) {
+      const err = new Error("not_found");
+      err.status = 404;
+      err.body = body || {};
+      throw err;
+    }
+    if (!res.ok) {
+      throw new Error((body && body.error) || `HTTP ${res.status}`);
+    }
+    return body;
+  },
+  putRepoClaudeMd: async (name, { content, expectedMtime }) => {
+    const res = await fetch(
+      `${BASE}/repositories/${encodeURIComponent(name)}/claude-md`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, expectedMtime }),
+      },
+    );
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* empty body */
+    }
+    if (res.status === 409) {
+      const err = new Error("stale");
+      err.status = 409;
+      err.body = body || {};
+      throw err;
+    }
+    if (!res.ok) {
+      throw new Error((body && body.error) || `HTTP ${res.status}`);
+    }
+    return body;
+  },
+
   // Native folder picker
   browseFolder: (prompt) => req("POST", "/browse-folder", { prompt }),
 

@@ -52,6 +52,15 @@ const IconMcp = () => (
   </svg>
 );
 
+const IconRepos = () => (
+  <svg {...ICON}>
+    <rect x="3" y="3" width="8" height="8" rx="1.5" />
+    <rect x="13" y="3" width="8" height="8" rx="1.5" />
+    <rect x="3" y="13" width="8" height="8" rx="1.5" />
+    <rect x="13" y="13" width="8" height="8" rx="1.5" opacity="0.6" />
+  </svg>
+);
+
 const IconUsage = () => (
   <svg {...ICON}>
     <path d="M3 3v18h18" />
@@ -122,6 +131,7 @@ const configure = [
   { to: "/agents", label: "Agents & Skills", icon: IconAgents },
   { to: "/commands", label: "Commands", icon: IconCommand },
   { to: "/mcp", label: "MCP Servers", icon: IconMcp },
+  { to: "/repos", label: "Repo Health", icon: IconRepos },
   { to: "/monitor", label: "Monitor", icon: IconMonitor },
   { to: "/usage", label: "Usage", icon: IconUsage },
 ];

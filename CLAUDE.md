@@ -54,6 +54,8 @@ ORCHESTRATOR (Main Session)
                                 DONE
 ```
 
+> **Spawn cwd note.** Claude CLI now spawns with `cwd: targetRepo` (when the task has a target repo) instead of `cwd: WORKSPACE`. The CLI loads the **target repo's** `CLAUDE.md` natively and resolves `.claude/agents`, `.claude/skills`, and `.claude/commands` filename-by-filename — every entry is either a per-file (or per-dir for skills) symlink back to this workspace's source-of-truth, or a real repo-local file that overrides it. Trading and `run-command` spawns have no target repo and keep `cwd: WORKSPACE`. See [Per-Repo Overrides](#per-repo-overrides).
+
 ### Agent Souls
 
 | Agent              | Soul                                                     | Model | Role                                             |
@@ -427,6 +429,12 @@ Debugger        : Fix is complete when every issue in issues.md is addressed
 
 ---
 
+## Per-Repo Overrides
+
+Each registered target repo gets per-file symlinks under `.claude/agents/`, `.claude/commands/`, and per-directory symlinks under `.claude/skills/` — all pointing back to this workspace's source-of-truth. When Claude spawns with `cwd: targetRepo`, it sees the workspace's agents/skills/commands transparently via those symlinks. To override one specific entry for one repo, drop a real file (or directory, for skills) at the same path: the real entry shadows the symlink, every other entry continues to resolve to the workspace. `.gitignore` catches the whole symlink farm, so committing an override requires `git add -f .claude/agents/coder-frontend.md` (or wherever the override lives). Use the **Repair links** button in Repo Health — or re-run `node scripts/migrate-repo-links.js` — to restore a missing/broken symlink. Full reference: [`docs/workspace-control.md` §8–§10](docs/workspace-control.md#8-per-repo-agent-override-workflow).
+
+---
+
 ## Notes
 
 - **Orchestrator = Main session** — spawns and coordinates all agents
@@ -436,3 +444,5 @@ Debugger        : Fix is complete when every issue in issues.md is addressed
 - **Stage 2 is routed** — Architect labels task type in SPEC.md; orchestrator spawns backend-only, frontend-only, or both in parallel
 - **Worktree isolation** — full-stack parallel coders each get their own git worktree to avoid conflicts; orchestrator merges branches after both finish
 - **Sequential after Stage 2** — Reviewer -> Debugger (if needed) -> Re-review
+- **Symlink architecture for agents/skills/commands** — workspace is source-of-truth; each target repo holds per-file (or per-dir for skills) symlinks back to it. Spawn cwd flips to `targetRepo`, so the CLI loads target's `CLAUDE.md` natively while still resolving every workspace agent transparently. Per-repo overrides live as real files committed with `git add -f`. See [Per-Repo Overrides](#per-repo-overrides).
+- **`--add-dir WORKSPACE` is mandatory** — every spawn site that flips `cwd: targetRepo` also pushes `--add-dir <WORKSPACE>` so the spawned CLI retains read access to `projects/`, `tasks/`, and other workspace-owned paths.

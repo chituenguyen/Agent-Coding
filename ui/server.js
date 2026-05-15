@@ -15,6 +15,11 @@ import {
   mkdir,
   rm,
   stat,
+  lstat,
+  readlink,
+  symlink,
+  unlink,
+  rename,
 } from "fs/promises";
 import { existsSync, realpathSync, statSync } from "fs";
 import path from "path";
@@ -766,6 +771,21 @@ ${description}
         }
       } catch {
         /* ignore — settings file may not exist */
+      }
+    }
+
+    // Auto-link workspace agents/commands/skills into the target repo and
+    // append the per-repo .gitignore entries. Non-fatal — task creation
+    // succeeds even if linking fails.
+    if (targetPath && existsSync(targetPath)) {
+      try {
+        const linkResult = await linkRepo(targetPath);
+        const ignoreResult = await ensureGitignore(targetPath);
+        console.error(
+          `[create-task] linked ${linkResult.created} new (${linkResult.skipped} existing, ${linkResult.overrides.length} overrides); gitignore appended=${ignoreResult.appended}`,
+        );
+      } catch (err) {
+        console.error(`[create-task] linkRepo failed: ${err.message}`);
       }
     }
 
@@ -1699,20 +1719,655 @@ app.delete("/api/companies/:companyId", async (req, res) => {
   }
 });
 
+async function buildCompanyPathMap() {
+  const map = new Map();
+  try {
+    const raw = await readFile(path.join(WORKSPACE, "companies.json"), "utf8");
+    const data = JSON.parse(raw);
+    for (const co of data.companies || []) {
+      for (const room of co.rooms || []) {
+        for (const team of room.teams || []) {
+          for (const repo of team.repos || []) {
+            const p = String(repo).replace(/\/+$/, "");
+            if (!map.has(p)) {
+              map.set(p, {
+                id: co.id,
+                name: co.name,
+                accent: co.accent || "",
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return map;
+}
+
+function lookupCompanyForPath(map, repoPath) {
+  if (!repoPath) return null;
+  const normalized = String(repoPath).replace(/\/+$/, "");
+  if (map.has(normalized)) return map.get(normalized);
+  let cur = normalized;
+  for (let i = 0; i < 2; i++) {
+    const parent = path.dirname(cur);
+    if (!parent || parent === cur) break;
+    if (map.has(parent)) return map.get(parent);
+    cur = parent;
+  }
+  return null;
+}
+
+// ─── repo health (per-repo Claude state scan) ───────────────────────────────
+
+const REPO_HEALTH_CACHE = new Map(); // name → { at: number, payload }
+const REPO_HEALTH_TTL_MS = 30_000;
+
+function invalidateHealthCache(name) {
+  REPO_HEALTH_CACHE.delete(name);
+}
+
+async function readJsonSafe(absPath) {
+  try {
+    return JSON.parse(await readFile(absPath, "utf8"));
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    console.warn(`[scan] unreadable ${absPath}: ${err.message}`);
+    return undefined; // exists but unparseable
+  }
+}
+
+async function statSafe(absPath) {
+  try {
+    return await stat(absPath);
+  } catch {
+    return null;
+  }
+}
+
+async function listDirEntries(absPath) {
+  try {
+    return await readdir(absPath, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+}
+
+async function scanRepoHealth(repo, companyMap, globalClaude) {
+  const repoPath = repo.path || "";
+  const company = lookupCompanyForPath(companyMap, repoPath);
+  const lastScannedAt = new Date().toISOString();
+
+  const emptyPayload = {
+    name: repo.name,
+    repoPath,
+    company,
+    exists: false,
+    claudeMd: { exists: false, mtime: null, size: null },
+    settings: {
+      exists: false,
+      localExists: false,
+      hookCount: 0,
+      permissionAllowCount: 0,
+      permissionDenyCount: 0,
+      additionalDirectoriesCount: 0,
+    },
+    agents: { count: 0, names: [] },
+    skills: { count: 0, names: [] },
+    mcp: {
+      dotMcpJsonExists: false,
+      dotMcpJsonServerCount: 0,
+      workspaceManagedServerCount: 0,
+      enabledMcpServers: [],
+      disabledMcpServers: [],
+      enabledMcpjsonServers: [],
+      disabledMcpjsonServers: [],
+    },
+    lastScannedAt,
+  };
+
+  if (!repoPath) return emptyPayload;
+  const repoStat = await statSafe(repoPath);
+  if (!repoStat || !repoStat.isDirectory()) return emptyPayload;
+
+  const claudeMdPath = path.join(repoPath, "CLAUDE.md");
+  const settingsPath = path.join(repoPath, ".claude", "settings.json");
+  const settingsLocalPath = path.join(
+    repoPath,
+    ".claude",
+    "settings.local.json",
+  );
+  const agentsDir = path.join(repoPath, ".claude", "agents");
+  const skillsDir = path.join(repoPath, ".claude", "skills");
+  const dotMcpPath = path.join(repoPath, ".mcp.json");
+
+  const [
+    claudeMdStat,
+    settingsJson,
+    settingsLocalStat,
+    agentEntries,
+    skillEntries,
+    dotMcpJson,
+    linksResult,
+  ] = await Promise.all([
+    statSafe(claudeMdPath),
+    readJsonSafe(settingsPath),
+    statSafe(settingsLocalPath),
+    listDirEntries(agentsDir),
+    listDirEntries(skillsDir),
+    readJsonSafe(dotMcpPath),
+    checkLinks(repoPath).catch((err) => {
+      console.warn(`[scan] checkLinks failed for ${repoPath}: ${err.message}`);
+      return null;
+    }),
+  ]);
+
+  const claudeMd = {
+    exists: !!claudeMdStat,
+    mtime: claudeMdStat ? claudeMdStat.mtime.toISOString() : null,
+    size: claudeMdStat ? claudeMdStat.size : null,
+  };
+
+  const settingsExists = settingsJson !== null; // null = ENOENT
+  const s =
+    settingsJson && typeof settingsJson === "object" ? settingsJson : {};
+  const perm =
+    s.permissions && typeof s.permissions === "object" ? s.permissions : {};
+  const hooks = s.hooks && typeof s.hooks === "object" ? s.hooks : {};
+  const settings = {
+    exists: settingsExists,
+    localExists: !!settingsLocalStat,
+    hookCount: Object.keys(hooks).length,
+    permissionAllowCount: Array.isArray(perm.allow) ? perm.allow.length : 0,
+    permissionDenyCount: Array.isArray(perm.deny) ? perm.deny.length : 0,
+    additionalDirectoriesCount: Array.isArray(perm.additionalDirectories)
+      ? perm.additionalDirectories.length
+      : 0,
+  };
+
+  const agentNames = (agentEntries || [])
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => e.name.replace(/\.md$/, ""))
+    .sort();
+  const agents = { count: agentNames.length, names: agentNames };
+
+  const skillNames = (skillEntries || [])
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .sort();
+  const skills = { count: skillNames.length, names: skillNames };
+
+  const dotMcpExists = dotMcpJson !== null;
+  const dotMcpServers =
+    dotMcpJson && typeof dotMcpJson === "object" && dotMcpJson.mcpServers
+      ? dotMcpJson.mcpServers
+      : {};
+  const workspaceManaged =
+    repo.mcpServers && typeof repo.mcpServers === "object"
+      ? Object.keys(repo.mcpServers)
+      : [];
+
+  const projects = (globalClaude && globalClaude.projects) || {};
+  const proj = projects[repoPath] || {};
+  const arrOr = (v) => (Array.isArray(v) ? v : []);
+
+  const mcp = {
+    dotMcpJsonExists: dotMcpExists,
+    dotMcpJsonServerCount: Object.keys(dotMcpServers).length,
+    workspaceManagedServerCount: workspaceManaged.length,
+    enabledMcpServers: arrOr(proj.enabledMcpServers),
+    disabledMcpServers: arrOr(proj.disabledMcpServers),
+    enabledMcpjsonServers: arrOr(proj.enabledMcpjsonServers),
+    disabledMcpjsonServers: arrOr(proj.disabledMcpjsonServers),
+  };
+
+  const links = linksResult
+    ? {
+        status: linksResult.status,
+        missing: linksResult.missing,
+        broken: linksResult.broken,
+        overrides: linksResult.overrides,
+      }
+    : null;
+
+  return {
+    name: repo.name,
+    repoPath,
+    company,
+    exists: true,
+    claudeMd,
+    settings,
+    agents,
+    skills,
+    mcp,
+    links,
+    lastScannedAt,
+  };
+}
+
+function claudeMdPathFor(repoPath) {
+  if (!repoPath) return null;
+  const root = path.resolve(repoPath);
+  const resolved = path.resolve(root, "CLAUDE.md");
+  if (resolved !== path.join(root, "CLAUDE.md")) return null;
+  if (!resolved.startsWith(root + path.sep)) return null;
+  return resolved;
+}
+
+async function readClaudeMdFor(repoPath) {
+  const filePath = claudeMdPathFor(repoPath);
+  if (!filePath) return null;
+  const st = await statSafe(filePath);
+  if (!st || !st.isFile()) return null;
+  const content = await readFile(filePath, "utf8");
+  return { content, mtime: st.mtime.toISOString(), path: filePath };
+}
+
+class StaleClaudeMdError extends Error {
+  constructor(currentMtime, currentContent) {
+    super("stale");
+    this.code = "STALE";
+    this.currentMtime = currentMtime;
+    this.currentContent = currentContent;
+  }
+}
+
+async function writeClaudeMdFor(repoPath, content, expectedMtime) {
+  const filePath = claudeMdPathFor(repoPath);
+  if (!filePath) {
+    const err = new Error("path traversal rejected");
+    err.code = "EBADPATH";
+    throw err;
+  }
+  const existing = await statSafe(filePath);
+  if (existing) {
+    if (expectedMtime != null) {
+      const expected = Date.parse(expectedMtime);
+      if (
+        !Number.isFinite(expected) ||
+        Math.abs(existing.mtimeMs - expected) > 1
+      ) {
+        const currentContent = await readFile(filePath, "utf8");
+        throw new StaleClaudeMdError(
+          existing.mtime.toISOString(),
+          currentContent,
+        );
+      }
+    } else {
+      // file exists but caller thinks it's new — race
+      const currentContent = await readFile(filePath, "utf8");
+      throw new StaleClaudeMdError(
+        existing.mtime.toISOString(),
+        currentContent,
+      );
+    }
+  } else if (expectedMtime != null) {
+    // caller has a stale mtime for a file that no longer exists
+    throw new StaleClaudeMdError(null, "");
+  }
+
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmpPath, content, "utf8");
+  await rename(tmpPath, filePath);
+  const after = await stat(filePath);
+  return {
+    mtime: after.mtime.toISOString(),
+    size: after.size,
+    path: filePath,
+  };
+}
+
+// ─── workspace → repo link management ─────────────────────────────────────
+
+const WORKSPACE_LINK_KINDS = [
+  { kind: "agents", granularity: "file" },
+  { kind: "commands", granularity: "file" },
+  { kind: "skills", granularity: "directory" },
+];
+
+const GITIGNORE_LINK_LINES = [
+  "/.claude/agents/",
+  "/.claude/skills/",
+  "/.claude/commands/",
+];
+
+function workspaceKindDir(kind) {
+  return path.join(WORKSPACE, ".claude", kind);
+}
+
+function assertRepoPath(repoPath) {
+  if (!repoPath || typeof repoPath !== "string") {
+    const err = new Error("repoPath required");
+    err.code = "EBADPATH";
+    throw err;
+  }
+  if (!path.isAbsolute(repoPath)) {
+    const err = new Error("repoPath must be absolute");
+    err.code = "EBADPATH";
+    throw err;
+  }
+  if (!existsSync(repoPath)) {
+    const err = new Error(`repoPath does not exist: ${repoPath}`);
+    err.code = "ENOENT";
+    throw err;
+  }
+}
+
+async function listWorkspaceLinkSources() {
+  // Returns { agents: [{name, absPath}], commands: [...], skills: [...] }
+  const out = {};
+  for (const { kind, granularity } of WORKSPACE_LINK_KINDS) {
+    const dir = workspaceKindDir(kind);
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      out[kind] = [];
+      continue;
+    }
+    const sources = [];
+    for (const e of entries) {
+      if (granularity === "file") {
+        if (e.isFile() && e.name.endsWith(".md")) {
+          sources.push({ name: e.name, absPath: path.join(dir, e.name) });
+        }
+      } else {
+        if (e.isDirectory()) {
+          sources.push({ name: e.name, absPath: path.join(dir, e.name) });
+        }
+      }
+    }
+    sources.sort((a, b) => a.name.localeCompare(b.name));
+    out[kind] = sources;
+  }
+  return out;
+}
+
+async function lstatSafe(p) {
+  try {
+    return await lstat(p);
+  } catch {
+    return null;
+  }
+}
+
+async function linkRepo(repoPath) {
+  assertRepoPath(repoPath);
+  const sources = await listWorkspaceLinkSources();
+  const result = { created: 0, skipped: 0, errors: [], overrides: [] };
+
+  for (const { kind } of WORKSPACE_LINK_KINDS) {
+    const linkDir = path.join(repoPath, ".claude", kind);
+    try {
+      await mkdir(linkDir, { recursive: true });
+    } catch (err) {
+      result.errors.push({ path: linkDir, message: err.message });
+      continue;
+    }
+
+    for (const src of sources[kind] || []) {
+      const targetPath = path.join(linkDir, src.name);
+      const relTarget = path.relative(linkDir, src.absPath);
+
+      try {
+        const st = await lstatSafe(targetPath);
+        if (!st) {
+          await symlink(relTarget, targetPath);
+          result.created++;
+          continue;
+        }
+        if (st.isSymbolicLink()) {
+          const current = await readlink(targetPath);
+          if (current === relTarget) {
+            result.skipped++;
+          } else {
+            await unlink(targetPath);
+            await symlink(relTarget, targetPath);
+            result.created++;
+          }
+        } else {
+          result.overrides.push(`${kind}/${src.name}`);
+        }
+      } catch (err) {
+        result.errors.push({ path: targetPath, message: err.message });
+      }
+    }
+  }
+  return result;
+}
+
+async function unlinkRepo(repoPath) {
+  assertRepoPath(repoPath);
+  const result = { removed: 0, kept: 0, errors: [] };
+
+  for (const { kind } of WORKSPACE_LINK_KINDS) {
+    const linkDir = path.join(repoPath, ".claude", kind);
+    let entries = [];
+    try {
+      entries = await readdir(linkDir);
+    } catch {
+      continue; // dir missing — noop
+    }
+    for (const name of entries) {
+      const entryPath = path.join(linkDir, name);
+      try {
+        const st = await lstatSafe(entryPath);
+        if (!st) continue;
+        if (st.isSymbolicLink()) {
+          await unlink(entryPath);
+          result.removed++;
+        } else {
+          result.kept++;
+        }
+      } catch (err) {
+        result.errors.push({ path: entryPath, message: err.message });
+      }
+    }
+  }
+  return result;
+}
+
+async function checkLinks(repoPath) {
+  assertRepoPath(repoPath);
+  const sources = await listWorkspaceLinkSources();
+  const missing = [];
+  const broken = [];
+  const overrides = [];
+  const valid = [];
+
+  for (const { kind } of WORKSPACE_LINK_KINDS) {
+    const linkDir = path.join(repoPath, ".claude", kind);
+    for (const src of sources[kind] || []) {
+      const targetPath = path.join(linkDir, src.name);
+      const label = `${kind}/${src.name}`;
+      const st = await lstatSafe(targetPath);
+      if (!st) {
+        missing.push(label);
+        continue;
+      }
+      if (st.isSymbolicLink()) {
+        try {
+          const resolved = await stat(targetPath);
+          if (!resolved) {
+            broken.push(label);
+            continue;
+          }
+          let realResolved;
+          try {
+            realResolved = realpathSync(targetPath);
+          } catch {
+            broken.push(label);
+            continue;
+          }
+          if (realResolved === src.absPath) {
+            valid.push(label);
+          } else {
+            broken.push(label);
+          }
+        } catch {
+          broken.push(label);
+        }
+      } else {
+        overrides.push(label);
+      }
+    }
+  }
+
+  let status;
+  if (broken.length > 0) status = "broken";
+  else if (missing.length > 0 && valid.length + overrides.length > 0)
+    status = "partial";
+  else if (valid.length === 0 && overrides.length === 0 && broken.length === 0)
+    status = "unlinked";
+  else status = "linked";
+
+  return { status, missing, broken, overrides, valid };
+}
+
+async function repairLinks(repoPath) {
+  assertRepoPath(repoPath);
+  // Remove broken symlinks first
+  for (const { kind } of WORKSPACE_LINK_KINDS) {
+    const linkDir = path.join(repoPath, ".claude", kind);
+    let entries = [];
+    try {
+      entries = await readdir(linkDir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const entryPath = path.join(linkDir, name);
+      const st = await lstatSafe(entryPath);
+      if (!st || !st.isSymbolicLink()) continue;
+      try {
+        await stat(entryPath); // follows — throws if broken
+      } catch {
+        try {
+          await unlink(entryPath);
+        } catch {}
+      }
+    }
+  }
+  await linkRepo(repoPath);
+  return await checkLinks(repoPath);
+}
+
+async function ensureGitignore(repoPath) {
+  assertRepoPath(repoPath);
+  const gitignorePath = path.join(repoPath, ".gitignore");
+  let existing = "";
+  try {
+    existing = await readFile(gitignorePath, "utf8");
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  const existingLines = new Set(
+    existing
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
+  const toAppend = GITIGNORE_LINK_LINES.filter((l) => !existingLines.has(l));
+  if (toAppend.length === 0) {
+    return { appended: false, lines: [] };
+  }
+  let prefix = "";
+  if (existing.length > 0) {
+    prefix = existing.endsWith("\n\n")
+      ? ""
+      : existing.endsWith("\n")
+        ? "\n"
+        : "\n\n";
+  }
+  const block = prefix + toAppend.join("\n") + "\n";
+  await writeFile(gitignorePath, existing + block, "utf8");
+  return { appended: true, lines: toAppend };
+}
+
+function chatSpawnCwd(chat) {
+  // Trading + no-folder chats land here → WORKSPACE.
+  const folders = (chat?.folderPaths || []).filter(
+    (p) => p && p !== WORKSPACE && existsSync(p),
+  );
+  return folders[0] || WORKSPACE;
+}
+const chatCompactCwd = chatSpawnCwd;
+
 app.get("/api/repositories", async (req, res) => {
   try {
     const repos = await getRepos();
+
+    // Dedupe by path, keeping earliest addedAt; warn once per duplicate path.
+    const byPath = new Map();
+    const warned = new Set();
+    for (const r of repos) {
+      const key = String(r.path || "").replace(/\/+$/, "");
+      if (!key) {
+        byPath.set(`__noPath__${r.name}`, r);
+        continue;
+      }
+      const existing = byPath.get(key);
+      if (!existing) {
+        byPath.set(key, r);
+      } else {
+        if (!warned.has(key)) {
+          console.warn(
+            `[api/repositories] duplicate repo path "${key}" — keeping "${existing.name}" (earliest addedAt), dropping "${r.name}"`,
+          );
+          warned.add(key);
+        }
+        const existingT = Date.parse(existing.addedAt || "") || Infinity;
+        const incomingT = Date.parse(r.addedAt || "") || Infinity;
+        if (incomingT < existingT) byPath.set(key, r);
+      }
+    }
+    const deduped = Array.from(byPath.values());
+
+    const companyMap = await buildCompanyPathMap();
+
     const enriched = await Promise.all(
-      repos.map(async (r) => {
+      deduped.map(async (r) => {
         const mcpConfig = await readProjectMcpConfig(r.name);
         return {
           name: r.name,
           repoPath: r.path || "",
           mcpServerCount: Object.keys(mcpConfig.mcpServers || {}).length,
+          company: lookupCompanyForPath(companyMap, r.path),
+          virtual: false,
         };
       }),
     );
-    res.json(enriched);
+
+    // Surface companies.json-declared repos that are NOT yet in mcp_server.json
+    // as virtual entries so /mcp shows the complete company hierarchy.
+    const covered = new Set(
+      enriched.map((r) => String(r.repoPath || "").replace(/\/+$/, "")),
+    );
+    const slugify = (s) =>
+      String(s)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+    const virtual = [];
+    const usedNames = new Set(enriched.map((r) => r.name));
+    for (const [absPath, company] of companyMap.entries()) {
+      const normalized = String(absPath).replace(/\/+$/, "");
+      if (covered.has(normalized)) continue;
+      let baseName = slugify(path.basename(normalized)) || "repo";
+      let name = baseName;
+      let i = 2;
+      while (usedNames.has(name)) name = `${baseName}-${i++}`;
+      usedNames.add(name);
+      virtual.push({
+        name,
+        repoPath: normalized,
+        mcpServerCount: 0,
+        company,
+        virtual: true,
+      });
+    }
+
+    res.json([...enriched, ...virtual]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1848,6 +2503,163 @@ app.delete("/api/repositories/:project/mcp/:serverName", async (req, res) => {
     delete config.mcpServers[serverName];
     await writeProjectMcpConfig(project, config.mcpServers);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/repositories/:name/health", async (req, res) => {
+  try {
+    const { name } = req.params;
+    const repos = await getRepos();
+    const repo = repos.find((r) => r.name === name);
+    if (!repo) {
+      return res.status(404).json({
+        error: `Repository '${name}' not found in companies/mcp_server`,
+      });
+    }
+
+    const cached = REPO_HEALTH_CACHE.get(name);
+    if (cached && Date.now() - cached.at < REPO_HEALTH_TTL_MS) {
+      return res.json(cached.payload);
+    }
+
+    console.error(`[scan] ${name}`);
+    const [companyMap, globalClaude] = await Promise.all([
+      buildCompanyPathMap(),
+      readGlobalClaude(),
+    ]);
+    const payload = await scanRepoHealth(repo, companyMap, globalClaude);
+    REPO_HEALTH_CACHE.set(name, { at: Date.now(), payload });
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/repositories/:name/link-status", async (req, res) => {
+  try {
+    const { name } = req.params;
+    const repos = await getRepos();
+    const repo = repos.find((r) => r.name === name);
+    if (!repo) {
+      return res.status(404).json({
+        error: `Repository '${name}' not found in companies/mcp_server`,
+      });
+    }
+    const repoPath = repo.path || "";
+    if (!repoPath || !existsSync(repoPath)) {
+      return res.status(404).json({ error: "repository path missing on disk" });
+    }
+    const result = await checkLinks(repoPath);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/repositories/:name/repair-links", async (req, res) => {
+  try {
+    const { name } = req.params;
+    const repos = await getRepos();
+    const repo = repos.find((r) => r.name === name);
+    if (!repo) {
+      return res.status(404).json({
+        error: `Repository '${name}' not found in companies/mcp_server`,
+      });
+    }
+    const repoPath = repo.path || "";
+    if (!repoPath || !existsSync(repoPath)) {
+      return res.status(404).json({ error: "repository path missing on disk" });
+    }
+    const includeGitignore =
+      req.body && typeof req.body.includeGitignore === "boolean"
+        ? req.body.includeGitignore
+        : true;
+    const result = await repairLinks(repoPath);
+    let gitignore = { appended: false, lines: [] };
+    if (includeGitignore) {
+      gitignore = await ensureGitignore(repoPath);
+    }
+    invalidateHealthCache(name);
+    res.json({ result, gitignore });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/repositories/:name/claude-md", async (req, res) => {
+  try {
+    const { name } = req.params;
+    const repos = await getRepos();
+    const repo = repos.find((r) => r.name === name);
+    if (!repo) {
+      return res.status(404).json({
+        error: `Repository '${name}' not found in companies/mcp_server`,
+      });
+    }
+    const repoPath = repo.path || "";
+    const resolved = claudeMdPathFor(repoPath);
+    if (!resolved) {
+      return res.status(400).json({ error: "invalid repo path" });
+    }
+    const result = await readClaudeMdFor(repoPath);
+    if (!result) {
+      return res
+        .status(404)
+        .json({ error: "CLAUDE.md not found", path: resolved });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/repositories/:name/claude-md", async (req, res) => {
+  try {
+    const { name } = req.params;
+    const body = req.body || {};
+    if (typeof body.content !== "string") {
+      return res.status(400).json({ error: "content required (string)" });
+    }
+    if (body.expectedMtime !== null && typeof body.expectedMtime !== "string") {
+      return res
+        .status(400)
+        .json({ error: "expectedMtime must be string or null" });
+    }
+    const repos = await getRepos();
+    const repo = repos.find((r) => r.name === name);
+    if (!repo) {
+      return res.status(404).json({
+        error: `Repository '${name}' not found in companies/mcp_server`,
+      });
+    }
+    const repoPath = repo.path || "";
+    if (!repoPath) {
+      return res.status(400).json({ error: "repository has no path" });
+    }
+
+    try {
+      const result = await writeClaudeMdFor(
+        repoPath,
+        body.content,
+        body.expectedMtime,
+      );
+      invalidateHealthCache(name);
+      res.json(result);
+    } catch (err) {
+      if (err && err.code === "STALE") {
+        return res.status(409).json({
+          error: "stale",
+          currentMtime: err.currentMtime,
+          currentContent: err.currentContent,
+        });
+      }
+      if (err && err.code === "EBADPATH") {
+        return res.status(400).json({ error: "invalid repo path" });
+      }
+      throw err;
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2257,9 +3069,54 @@ app.get("/api/mcp", async (req, res) => {
   try {
     const global = await readGlobalClaude();
     const project = await readProjectMcp();
+
+    const connectors = Array.isArray(global.claudeAiMcpEverConnected)
+      ? global.claudeAiMcpEverConnected.map((entry) => {
+          const rawLabel = String(entry);
+          const name = rawLabel.replace(/^claude\.ai\s+/, "");
+          return { name, rawLabel, source: "claude.ai" };
+        })
+      : [];
+
+    const perProjectState = {};
+    const projects = global.projects || {};
+    for (const [absPath, proj] of Object.entries(projects)) {
+      if (!proj || typeof proj !== "object") continue;
+      const entry = {};
+      if (
+        Array.isArray(proj.enabledMcpServers) &&
+        proj.enabledMcpServers.length
+      )
+        entry.enabledMcpServers = proj.enabledMcpServers;
+      if (
+        Array.isArray(proj.disabledMcpServers) &&
+        proj.disabledMcpServers.length
+      )
+        entry.disabledMcpServers = proj.disabledMcpServers;
+      if (
+        Array.isArray(proj.enabledMcpjsonServers) &&
+        proj.enabledMcpjsonServers.length
+      )
+        entry.enabledMcpjsonServers = proj.enabledMcpjsonServers;
+      if (
+        Array.isArray(proj.disabledMcpjsonServers) &&
+        proj.disabledMcpjsonServers.length
+      )
+        entry.disabledMcpjsonServers = proj.disabledMcpjsonServers;
+      if (
+        proj.mcpServers &&
+        typeof proj.mcpServers === "object" &&
+        Object.keys(proj.mcpServers).length
+      )
+        entry.mcpServers = proj.mcpServers;
+      if (Object.keys(entry).length) perProjectState[absPath] = entry;
+    }
+
     res.json({
       global: global.mcpServers || {},
       project: project.mcpServers || {},
+      connectors,
+      perProjectState,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2739,8 +3596,10 @@ async function runCompactIfNeeded(chat, broadcast) {
       "--resume",
       chat.sessionId,
     ];
+    const spawnCwd = chatCompactCwd(chat);
+    if (spawnCwd !== WORKSPACE) args.push("--add-dir", WORKSPACE);
     const proc = spawn("claude", args, {
-      cwd: WORKSPACE,
+      cwd: spawnCwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -3818,8 +4677,10 @@ wss.on("connection", (ws, req) => {
         files: [],
         db,
       });
+      const spawnCwd = targetDir || WORKSPACE;
+      if (spawnCwd !== WORKSPACE) finalArgs.push("--add-dir", WORKSPACE);
       const proc = spawn("claude", finalArgs, {
-        cwd: WORKSPACE,
+        cwd: spawnCwd,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -3989,8 +4850,10 @@ wss.on("connection", (ws, req) => {
         files: [],
         db,
       });
+      const spawnCwd = targetDir || WORKSPACE;
+      if (spawnCwd !== WORKSPACE) finalArgs.push("--add-dir", WORKSPACE);
       const proc = spawn("claude", finalArgs, {
-        cwd: WORKSPACE,
+        cwd: spawnCwd,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -4176,8 +5039,10 @@ wss.on("connection", (ws, req) => {
         files: [],
         db,
       });
+      const spawnCwd = targetDir || WORKSPACE;
+      if (spawnCwd !== WORKSPACE) finalArgs.push("--add-dir", WORKSPACE);
       const proc = spawn("claude", finalArgs, {
-        cwd: WORKSPACE,
+        cwd: spawnCwd,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -4569,8 +5434,9 @@ wss.on("connection", (ws, req) => {
       // read DOM, etc.). Without --chrome the subprocess has no browser MCP.
       args.push("--chrome");
 
-      // Folder mentions: keep cwd=WORKSPACE so --resume keeps finding the session,
-      // expose mentioned folders via --add-dir so Claude can read/write inside them.
+      // Folder mentions are exposed via --add-dir so Claude can read/write
+      // inside them. cwd is flipped to the first mentioned folder (if any) so
+      // the target repo's CLAUDE.md and per-repo agents resolve natively.
       const folderPaths = (chat.folderPaths || []).filter(
         (p) => p && p !== WORKSPACE && existsSync(p),
       );
@@ -4584,8 +5450,10 @@ wss.on("connection", (ws, req) => {
         files: folderPaths,
         db,
       });
+      const spawnCwd = chatSpawnCwd(chat);
+      if (spawnCwd !== WORKSPACE) finalArgs.push("--add-dir", WORKSPACE);
       const proc = spawn("claude", finalArgs, {
-        cwd: WORKSPACE,
+        cwd: spawnCwd,
         env: process.env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -4927,8 +5795,10 @@ async function queueTick() {
     files: [],
     db,
   });
+  const spawnCwd = targetDir || WORKSPACE;
+  if (spawnCwd !== WORKSPACE) finalArgs.push("--add-dir", WORKSPACE);
   const proc = spawn("claude", finalArgs, {
-    cwd: WORKSPACE,
+    cwd: spawnCwd,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -5091,6 +5961,24 @@ migrateProjectMcpFiles().catch(() => {});
   if (db) {
     startIndexer({ db, logger: console });
   }
+
+  // Workspace → repo link health check (advisory; never auto-repairs).
+  (async () => {
+    try {
+      const repos = await getRepos();
+      for (const r of repos || []) {
+        if (!r.path || !existsSync(r.path)) continue;
+        try {
+          const status = await checkLinks(r.path);
+          console.error(`[link-check] ${r.name}: ${status.status}`);
+        } catch (err) {
+          console.error(`[link-check] ${r.name}: error ${err.message}`);
+        }
+      }
+    } catch (err) {
+      console.error(`[link-check] failed: ${err.message}`);
+    }
+  })();
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`URI Platform UI → http://localhost:${PORT}`);

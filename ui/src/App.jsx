@@ -11,6 +11,7 @@ import Investigate from "./pages/Investigate";
 import Agents from "./pages/Agents";
 import Commands from "./pages/Commands";
 import Mcp from "./pages/Mcp";
+import RepoHealth from "./pages/RepoHealth";
 import Usage from "./pages/Usage";
 import Monitor from "./pages/Monitor";
 import Trading from "./pages/Trading";
@@ -63,7 +64,16 @@ export default function App() {
           <Route path="/investigate" element={<Investigate />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/commands" element={<Commands />} />
-          <Route path="/mcp" element={<Mcp />} />
+          <Route path="/mcp" element={<Mcp />}>
+            <Route path="global/:serverId?" element={null} />
+            <Route path="company/:companyId" element={null} />
+            <Route path="company/:companyId/repo/:repoId" element={null} />
+            <Route path="unaffiliated/:repoId" element={null} />
+          </Route>
+          <Route path="/repos" element={<RepoHealth />}>
+            <Route path=":name" element={null} />
+            <Route path=":name/claude-md" element={null} />
+          </Route>
           <Route path="/monitor" element={<Monitor />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/trading" element={<Trading />} />
