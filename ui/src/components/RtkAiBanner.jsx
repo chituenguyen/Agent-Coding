@@ -1,6 +1,8 @@
-// Floating bottom-right warning that prompts the user to enable RTK-AI
-// (Routing-Token-Kit) — used to optimize token usage / cost. When the user
-// clicks "Auto config", the banner saves a flag in localStorage and disappears.
+// Floating bottom-right banner prompting the user to enable RTK
+// (Rust Token Killer — https://github.com/rtk-ai/rtk) to reduce token usage
+// when running Claude Code. RTK is a LOCAL Rust CLI + Bash hook, NOT a
+// remote API — it intercepts Claude's Bash tool calls and rewrites their
+// output to be 60–90% smaller. Works fully offline, no API key.
 //
 // localStorage keys:
 //   - URI:rtkai-status     →  "configured" | "skipped"
@@ -8,6 +10,11 @@
 //
 // To re-trigger the banner, run in DevTools:
 //   localStorage.removeItem("URI:rtkai-status")
+//
+// TODO(rtk-integration): the current autoConfigure() is a stub — it only
+// flips a localStorage flag. To make it real, the UI needs a backend
+// endpoint (e.g. POST /api/rtk/install) that runs the install + init flow
+// on the host. See autoConfigure() below for the full install spec.
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -52,24 +59,55 @@ export default function RtkAiBanner() {
 
   if (status === "configured" || status === "skipped" || !mounted) return null;
 
+  // Installs RTK (https://github.com/rtk-ai/rtk) globally and registers
+  // the Claude Code Bash hook so token-heavy command output is compressed.
+  // Flow: detect → install (if missing) → init (patches ~/.claude/settings.json)
+  // → verify. Backend endpoints live in ui/server/routes/rtk.js.
   async function autoConfigure() {
     setBusy(true);
-    // Simulated handshake — replace with real endpoint ping once provided.
-    await new Promise((r) => setTimeout(r, 500));
-    saveConfig({
-      mode: "auto",
-      provider: "rtk-ai",
-      configuredAt: new Date().toISOString(),
-      // TODO: replace with real endpoint / token once the user provides it
-      endpoint: "https://api.rtk-ai.local",
-    });
-    saveStatus("configured");
-    setStatus("configured");
-    setBusy(false);
-    toast.success("RTK-AI configured", {
-      description: "Token routing & cost optimization enabled.",
-      duration: 3500,
-    });
+    try {
+      const det = await fetch("/api/rtk/detect").then((r) => r.json());
+      if (!det.installed) {
+        toast.loading("Installing rtk via Homebrew…", { id: "rtk-install" });
+        const inst = await fetch("/api/rtk/install", { method: "POST" }).then(
+          (r) => r.json(),
+        );
+        if (inst.error) throw new Error(inst.error);
+      }
+      toast.loading("Registering Claude hook…", { id: "rtk-install" });
+      const init = await fetch("/api/rtk/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "global" }),
+      }).then((r) => r.json());
+      if (init.error) throw new Error(init.error);
+
+      const ver = await fetch("/api/rtk/verify").then((r) => r.json());
+      saveConfig({
+        mode: "auto",
+        provider: "rtk-ai",
+        scope: "global",
+        configuredAt: new Date().toISOString(),
+        installed: ver.installed,
+        version: ver.version,
+        hookActive: ver.hookActive,
+      });
+      saveStatus("configured");
+      setStatus("configured");
+      toast.success("RTK installed globally", {
+        id: "rtk-install",
+        description: `${ver.version || "rtk"} — restart Claude Code to activate the Bash hook.`,
+        duration: 5000,
+      });
+    } catch (err) {
+      toast.error("RTK install failed", {
+        id: "rtk-install",
+        description: String(err.message || err),
+        duration: 6000,
+      });
+    } finally {
+      setBusy(false);
+    }
   }
 
   function skip() {
@@ -89,8 +127,7 @@ export default function RtkAiBanner() {
           aria-hidden
           className="absolute inset-x-0 top-0 h-0.5"
           style={{
-            background:
-              "linear-gradient(90deg, #f59e0b, #ef4444, #f59e0b)",
+            background: "linear-gradient(90deg, #f59e0b, #ef4444, #f59e0b)",
           }}
         />
         {/* Soft glow */}
@@ -140,8 +177,8 @@ export default function RtkAiBanner() {
               Optimize tokens with RTK-AI
             </h3>
             <p className="mt-1 text-xs leading-relaxed text-co-fg/60">
-              Route requests through the token-optimizer to save cost and
-              speed up agent runs. Auto-config takes one click.
+              Route requests through the token-optimizer to save cost and speed
+              up agent runs. Auto-config takes one click.
             </p>
           </div>
 

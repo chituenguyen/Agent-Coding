@@ -27,6 +27,8 @@ import remoteRouter from "./server/routes/remote.js";
 import monitorRouter from "./server/routes/monitor.js";
 import modelsRouter from "./server/routes/models.js";
 import chatRouter from "./server/routes/chat.js";
+import rtkRouter from "./server/routes/rtk.js";
+import chromeMcpRouter from "./server/routes/chrome-mcp.js";
 import catchAllRouter from "./server/routes/catch-all.js";
 
 const app = createApp();
@@ -49,6 +51,8 @@ app.use(remoteRouter);
 app.use(monitorRouter);
 app.use(chatRouter);
 app.use(modelsRouter);
+app.use(rtkRouter);
+app.use(chromeMcpRouter);
 app.use(catchAllRouter);
 
 attachWebSocket(wss);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../api";
 import { toast } from "sonner";
+import ChromeMcpStatus from "../components/ChromeMcpStatus";
 
 const PERMISSION_MODES = [
   {
@@ -281,6 +282,10 @@ export default function Settings() {
         )}
 
         <ProfileCard account={account} />
+
+        <div className="mb-6">
+          <ChromeMcpStatus />
+        </div>
 
         <div className="space-y-6">
           {/* Model */}
